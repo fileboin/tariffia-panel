@@ -2,14 +2,18 @@ package com.tariffia.panel.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -19,21 +23,27 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tariffia.panel.data.ssh.HostKeyIdentity
 
+private val ConnectedColor = Color(0xFF2E7D32)
+private val FailedColor = Color(0xFFC62828)
+
 /**
  * VPS/SSH screen. The private key is entered here but never read back after saving;
  * the passphrase field is masked. Test Connection enforces host-key verification with
- * an explicit enrollment step.
+ * an explicit enrollment step and never auto-accepts a key.
  */
 @Composable
 fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
+    val fieldsEnabled = !state.isLoading && !state.isTesting
 
     Column(
         modifier = Modifier
@@ -44,13 +54,15 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
     ) {
         Text(text = "VPS / SSH", style = MaterialTheme.typography.headlineSmall)
 
+        ConnectionCard(state.connection)
+
         OutlinedTextField(
             value = state.host,
             onValueChange = viewModel::onHostChange,
             label = { Text("Host") },
             placeholder = { Text("vps.example.com") },
             singleLine = true,
-            enabled = !state.isLoading,
+            enabled = fieldsEnabled,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -59,7 +71,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             onValueChange = viewModel::onPortChange,
             label = { Text("Port") },
             singleLine = true,
-            enabled = !state.isLoading,
+            enabled = fieldsEnabled,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -69,7 +81,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             onValueChange = viewModel::onUsernameChange,
             label = { Text("Username") },
             singleLine = true,
-            enabled = !state.isLoading,
+            enabled = fieldsEnabled,
             modifier = Modifier.fillMaxWidth(),
         )
 
@@ -81,7 +93,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             singleLine = false,
             minLines = 4,
             maxLines = 8,
-            enabled = !state.isLoading,
+            enabled = fieldsEnabled,
             supportingText = {
                 Text(
                     if (state.hasStoredKey) {
@@ -99,7 +111,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             onValueChange = viewModel::onPassphraseChange,
             label = { Text("Passphrase (optional)") },
             singleLine = true,
-            enabled = !state.isLoading,
+            enabled = fieldsEnabled,
             visualTransformation = PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             supportingText = {
@@ -116,7 +128,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
 
         Button(
             onClick = viewModel::saveProfile,
-            enabled = !state.isLoading && !state.isTesting,
+            enabled = fieldsEnabled,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save Profile")
@@ -124,15 +136,15 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
 
         Button(
             onClick = viewModel::testConnection,
-            enabled = !state.isLoading && !state.isTesting,
+            enabled = fieldsEnabled,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Test Connection")
         }
 
         OutlinedButton(
-            onClick = viewModel::forgetPinnedKey,
-            enabled = !state.isLoading && !state.isTesting,
+            onClick = viewModel::requestForgetPinnedKey,
+            enabled = fieldsEnabled,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Forget pinned host key")
@@ -142,7 +154,7 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
 
-        state.statusMessage?.let { message ->
+        state.profileMessage?.let { message ->
             Text(
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
@@ -151,20 +163,50 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
         }
     }
 
-    state.enrollment?.let { presented ->
+    (state.connection as? VpsConnectionState.HostKeyConfirmationRequired)?.let { required ->
         EnrollmentDialog(
-            presented = presented,
+            presented = required.presented,
             onConfirm = viewModel::confirmEnrollment,
             onCancel = viewModel::cancelEnrollment,
         )
     }
 
-    state.hostKeyChanged?.let { change ->
+    (state.connection as? VpsConnectionState.HostKeyChanged)?.let { changed ->
         HostKeyChangedDialog(
-            pinnedFingerprint = change.pinned.identity.fingerprint,
-            presentedFingerprint = change.presented.fingerprint,
+            pinnedFingerprint = changed.pinned.identity.fingerprint,
+            presentedFingerprint = changed.presented.fingerprint,
             onDismiss = viewModel::dismissHostKeyChanged,
         )
+    }
+
+    if (state.showForgetConfirmation) {
+        ForgetHostKeyDialog(
+            onConfirm = viewModel::confirmForgetPinnedKey,
+            onCancel = viewModel::cancelForgetPinnedKey,
+        )
+    }
+}
+
+@Composable
+private fun ConnectionCard(connection: VpsConnectionState) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text = "●", color = connectionColor(connection), style = MaterialTheme.typography.bodyLarge)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = connectionLabel(connection), style = MaterialTheme.typography.titleMedium)
+            }
+            connectionDescription(connection)?.let { description ->
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
     }
 }
 
@@ -207,4 +249,47 @@ private fun HostKeyChangedDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
     )
+}
+
+@Composable
+private fun ForgetHostKeyDialog(onConfirm: () -> Unit, onCancel: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onCancel,
+        title = { Text("Forget pinned host key?") },
+        text = { Text("The next Test Connection will ask you to trust the server again.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Forget") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+    )
+}
+
+private fun connectionLabel(connection: VpsConnectionState): String = when (connection) {
+    VpsConnectionState.NotConfigured -> "Not configured"
+    VpsConnectionState.Idle -> "Not tested"
+    VpsConnectionState.Testing -> "Testing…"
+    VpsConnectionState.Connected -> "Connected"
+    VpsConnectionState.AuthenticationFailed -> "Authentication failed"
+    is VpsConnectionState.ConnectionFailed -> "Connection failed"
+    is VpsConnectionState.HostKeyConfirmationRequired -> "Host key confirmation required"
+    is VpsConnectionState.HostKeyChanged -> "Host key changed"
+}
+
+private fun connectionDescription(connection: VpsConnectionState): String? = when (connection) {
+    VpsConnectionState.NotConfigured -> "Fill in host, username and a private key."
+    VpsConnectionState.Idle -> null
+    VpsConnectionState.Testing -> "Connecting…"
+    VpsConnectionState.Connected -> "Handshake and authentication succeeded."
+    VpsConnectionState.AuthenticationFailed -> "Check the username and private key."
+    is VpsConnectionState.ConnectionFailed -> connection.message ?: "Could not reach the server."
+    is VpsConnectionState.HostKeyConfirmationRequired -> "Confirm the server fingerprint to continue."
+    is VpsConnectionState.HostKeyChanged -> "The server key changed. Connection refused."
+}
+
+@Composable
+private fun connectionColor(connection: VpsConnectionState): Color = when (connection) {
+    VpsConnectionState.Connected -> ConnectedColor
+    VpsConnectionState.Idle,
+    VpsConnectionState.Testing,
+    VpsConnectionState.NotConfigured,
+    -> MaterialTheme.colorScheme.outline
+    else -> FailedColor
 }

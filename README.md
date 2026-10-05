@@ -5,8 +5,11 @@ Android control panel for Tariffia Router, VPS/SSH and provider configuration.
 Planned MVP (partially implemented):
 
 - **VPS / SSH**: host, port, user, private key, host-key verification, Test SSH Connection.
-  Implemented: profile + Keystore-encrypted key/passphrase, mandatory host-key pinning
-  with explicit enrollment, Test Connection (JSch). Not yet: running commands/deploy.
+  Implemented: profile + Keystore-encrypted key/passphrase, strict validation, explicit
+  connection states (Not configured / Testing / Connected / Auth failed / Connection
+  failed / host-key confirmation / host-key changed), mandatory host-key pinning with
+  explicit enrollment and confirmation to forget a pin, Test Connection (JSch). Not yet:
+  running commands/deploy.
 - **Router**: URL, token, `/healthz`, `/v1/models`, provider configured status.
   Implemented: URL/token storage, `/healthz` + `/v1/models` status.
 - **Providers**: list from the router registry, masked API-key input, save via SSH to
