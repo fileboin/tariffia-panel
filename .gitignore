@@ -1,0 +1,29 @@
+# Android / Gradle
+.gradle/
+build/
+local.properties
+*.apk
+*.aab
+captures/
+.externalNativeBuild/
+.cxx/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Secrets — never commit keys
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.pem
+*.key
+secrets/
+config.local.*
+
+# OS
+.DS_Store
+Thumbs.db
