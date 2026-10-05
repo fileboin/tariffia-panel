@@ -1,1 +1,1 @@
-# Keep default optimizations. No custom rules needed for the skeleton.
+# Keep default optimizations. No custom ProGuard/R8 rules are needed.

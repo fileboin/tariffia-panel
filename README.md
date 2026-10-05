@@ -2,7 +2,7 @@
 
 Android control panel for Tariffia Router, VPS/SSH and provider configuration.
 
-Planned MVP (partially implemented):
+Features (partially implemented):
 
 - **VPS / SSH**: host, port, user, private key, host-key verification, Test SSH Connection.
   Implemented: profile + Keystore-encrypted key/passphrase, strict validation, explicit
@@ -27,7 +27,19 @@ Notes:
 - Provider API keys are never committed, never logged, and never shown in full once saved.
 - The router core is not modified by this project.
 
-Status: **early skeleton** — Kotlin + Compose app with four screens. Settings stores
+## Build
+
+The Gradle wrapper is committed, so a fresh clone builds directly with the wrapper
+(JDK 17 and an Android SDK are required):
+
+```
+./gradlew testDebugUnitTest
+./gradlew assembleDebug
+```
+
+CI (`.github/workflows/android.yml`) runs the same two tasks on every push and PR.
+
+Status: **MVP in progress** — Kotlin + Compose app with four screens. Settings stores
 the router URL and, via the Android Keystore, the router token (masked input with a
 temporary Show/Hide, never logged, never shown again once saved, clearable with
 confirmation). Home/Status is a dashboard: `GET /healthz`
