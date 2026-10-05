@@ -17,4 +17,7 @@ Notes:
 - Provider API keys are never committed, never logged, and never shown in full once saved.
 - The router core is not modified by this project.
 
-Status: **scaffold** — only this README and repository metadata so far. No Android code yet.
+Status: **early skeleton** — Kotlin + Compose app with four placeholder screens.
+The Settings screen can store the router URL and, via the Android Keystore, the
+router token (masked input, never logged, never shown again once saved). Router
+HTTP calls (`/healthz`, `/v1/models`), SSH and provider keys are not implemented yet.

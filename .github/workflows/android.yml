@@ -45,8 +45,8 @@ jobs:
       - name: Generate Gradle wrapper
         run: gradle wrapper --gradle-version 8.7
 
-      - name: Build debug APK
-        run: ./gradlew --no-daemon assembleDebug --stacktrace
+      - name: Build debug APK and run unit tests
+        run: ./gradlew --no-daemon assembleDebug testDebugUnitTest --stacktrace
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

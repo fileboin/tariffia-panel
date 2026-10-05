@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.tariffia.panel.ui.screens.PlaceholderScreen
+import com.tariffia.panel.ui.screens.SettingsScreen
 
 /** The four MVP destinations. */
 enum class Destination(val route: String, val label: String) {
@@ -65,7 +66,7 @@ fun TariffiaApp() {
                 PlaceholderScreen("Providers", "Provider API keys and configured status will go here.")
             }
             composable(Destination.Settings.route) {
-                PlaceholderScreen("Settings", "Router URL, token and VPS profiles will go here.")
+                SettingsScreen()
             }
         }
     }
