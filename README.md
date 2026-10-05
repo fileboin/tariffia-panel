@@ -10,7 +10,10 @@ Planned MVP (partially implemented):
 - **Router**: URL, token, `/healthz`, `/v1/models`, provider configured status.
   Implemented: URL/token storage, `/healthz` + `/v1/models` status.
 - **Providers**: list from the router registry, masked API-key input, save via SSH to
-  the VPS secret/env store, `configured` / `not configured` status. Not yet implemented.
+  the VPS secret/env store, `configured` / `not configured` status.
+  Implemented: read-only provider status derived from the router's existing `/healthz`
+  (loaded IDs + load-time warnings); Unknown when the router reports nothing. Not yet:
+  API-key input/storage/transfer.
 - **Ollama**: status and models. Not yet implemented.
 
 Notes:
@@ -25,5 +28,6 @@ the router URL and, via the Android Keystore, the router token (masked input, ne
 logged, never shown again once saved). Home/Status checks `GET /healthz` and lists
 `GET /v1/models` with `Authorization: Bearer`. VPS/SSH stores the profile and
 Keystore-encrypted private key/passphrase, pins the server host key after explicit
-user confirmation, and can Test Connection via JSch. Provider keys and Ollama are not
-implemented yet.
+user confirmation, and can Test Connection via JSch. Providers shows the status the
+router reports through `/healthz` (no new endpoint; Unknown when unreported). Provider
+API-key input and Ollama are not implemented yet.

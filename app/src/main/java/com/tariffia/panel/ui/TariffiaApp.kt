@@ -14,7 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.tariffia.panel.ui.screens.HomeScreen
-import com.tariffia.panel.ui.screens.PlaceholderScreen
+import com.tariffia.panel.ui.screens.ProvidersScreen
 import com.tariffia.panel.ui.screens.SettingsScreen
 import com.tariffia.panel.ui.screens.VpsScreen
 
@@ -71,7 +71,13 @@ fun TariffiaApp() {
                 VpsScreen()
             }
             composable(Destination.Providers.route) {
-                PlaceholderScreen("Providers", "Provider API keys and configured status will go here.")
+                ProvidersScreen(
+                    onOpenSettings = {
+                        navController.navigate(Destination.Settings.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                )
             }
             composable(Destination.Settings.route) {
                 SettingsScreen()

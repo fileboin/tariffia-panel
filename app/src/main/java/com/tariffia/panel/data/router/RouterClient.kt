@@ -21,6 +21,15 @@ class RouterClient(
     suspend fun checkHealth(baseUrl: String, token: String?): RouterResult<Unit> =
         request(baseUrl, PATH_HEALTHZ, token) { RouterResult.Success(Unit) }
 
+    suspend fun fetchHealth(baseUrl: String, token: String?): RouterResult<RouterHealth> =
+        request(baseUrl, PATH_HEALTHZ, token) { body ->
+            try {
+                RouterResult.Success(parseHealth(body))
+            } catch (e: Exception) {
+                RouterResult.InvalidResponse("Could not parse the health response.")
+            }
+        }
+
     suspend fun fetchModels(baseUrl: String, token: String?): RouterResult<List<String>> =
         request(baseUrl, PATH_MODELS, token) { body ->
             try {
