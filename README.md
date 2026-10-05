@@ -12,8 +12,9 @@ Planned MVP (partially implemented):
 - **Providers**: list from the router registry, masked API-key input, save via SSH to
   the VPS secret/env store, `configured` / `not configured` status.
   Implemented: read-only provider status derived from the router's existing `/healthz`
-  (loaded IDs + load-time warnings); Unknown when the router reports nothing. Not yet:
-  API-key input/storage/transfer.
+  (loaded IDs + load-time warnings); Unknown when the router reports nothing. Provider
+  details let you store an API key locally (Keystore-encrypted, per provider, masked,
+  never read back). Not yet: sending the key to the router or VPS over SSH.
 - **Ollama**: status and models. Not yet implemented.
 
 Notes:
@@ -29,5 +30,7 @@ logged, never shown again once saved). Home/Status checks `GET /healthz` and lis
 `GET /v1/models` with `Authorization: Bearer`. VPS/SSH stores the profile and
 Keystore-encrypted private key/passphrase, pins the server host key after explicit
 user confirmation, and can Test Connection via JSch. Providers shows the status the
-router reports through `/healthz` (no new endpoint; Unknown when unreported). Provider
-API-key input and Ollama are not implemented yet.
+router reports through `/healthz` (no new endpoint; Unknown when unreported) and lets
+you store a per-provider API key locally in the Android Keystore (masked, never read
+back, never sent anywhere yet). Sending the key to the router/VPS and Ollama are not
+implemented yet.

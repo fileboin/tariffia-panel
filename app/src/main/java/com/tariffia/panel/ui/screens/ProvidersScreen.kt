@@ -1,5 +1,6 @@
 package com.tariffia.panel.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,22 +17,19 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tariffia.panel.data.providers.ProviderRow
-import com.tariffia.panel.data.providers.ProviderStatus
-
-private val ConfiguredColor = Color(0xFF2E7D32)
-private val NotConfiguredColor = Color(0xFFC62828)
 
 /**
  * Providers screen. Shows only what the router reports through `/healthz`; statuses
- * are never hard-coded and default to Unknown when unavailable. No API-key input yet.
+ * are never hard-coded and default to Unknown when unavailable. Each row also shows
+ * whether an API key is stored locally, kept clearly separate from router status.
  */
 @Composable
 fun ProvidersScreen(
     onOpenSettings: () -> Unit,
+    onProviderClick: (ProviderRow) -> Unit,
     viewModel: ProvidersViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
@@ -63,14 +61,14 @@ fun ProvidersScreen(
                     color = NotConfiguredColor,
                 )
                 Text(
-                    text = "Showing Unknown until the router is reachable.",
+                    text = "Router status Unknown until the router is reachable. Local key status is unaffected.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
             }
             ProvidersLoadState.READY -> {
                 Text(
-                    text = "Reported by the router's /healthz status.",
+                    text = "Router status from /healthz. Tap a provider for details.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -78,7 +76,9 @@ fun ProvidersScreen(
         }
 
         if (state.loadState != ProvidersLoadState.LOADING) {
-            state.rows.forEach { row -> ProviderRowItem(row) }
+            state.rows.forEach { row ->
+                ProviderRowItem(row = row, onClick = { onProviderClick(row) })
+            }
         }
 
         Button(
@@ -91,19 +91,29 @@ fun ProvidersScreen(
 }
 
 @Composable
-private fun ProviderRowItem(row: ProviderRow) {
-    Column(modifier = Modifier.fillMaxWidth()) {
+private fun ProviderRowItem(row: ProviderRow, onClick: () -> Unit) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 8.dp),
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(text = row.displayName, style = MaterialTheme.typography.bodyLarge)
             Text(
-                text = statusLabel(row.status),
+                text = providerStatusLabel(row.status),
                 style = MaterialTheme.typography.bodyMedium,
-                color = statusColor(row.status),
+                color = providerStatusColor(row.status),
             )
         }
+        Text(
+            text = "API key stored locally: ${if (row.hasLocalKey) "Yes" else "No"}",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
         row.note?.let { note ->
             Text(
                 text = note,
@@ -112,17 +122,4 @@ private fun ProviderRowItem(row: ProviderRow) {
             )
         }
     }
-}
-
-private fun statusLabel(status: ProviderStatus): String = when (status) {
-    ProviderStatus.CONFIGURED -> "Configured"
-    ProviderStatus.NOT_CONFIGURED -> "Not configured"
-    ProviderStatus.UNKNOWN -> "Unknown"
-}
-
-@Composable
-private fun statusColor(status: ProviderStatus): Color = when (status) {
-    ProviderStatus.CONFIGURED -> ConfiguredColor
-    ProviderStatus.NOT_CONFIGURED -> NotConfiguredColor
-    ProviderStatus.UNKNOWN -> MaterialTheme.colorScheme.outline
 }

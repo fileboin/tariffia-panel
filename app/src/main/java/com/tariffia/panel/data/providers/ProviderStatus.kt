@@ -13,6 +13,8 @@ data class ProviderRow(
     val displayName: String,
     val status: ProviderStatus,
     val note: String? = null,
+    /** Whether an API key for this provider is stored locally (device only). */
+    val hasLocalKey: Boolean = false,
 )
 
 /** A display name plus the registry IDs it may appear under. */
@@ -29,6 +31,14 @@ object ProviderCatalog {
         KnownProvider("Token Router", listOf("token-router", "tokenrouter", "token_router")),
         KnownProvider("Ollama", listOf("ollama")),
     )
+
+    /** The display name for a provider ID, or the ID itself when it is not known. */
+    fun displayNameFor(id: String): String {
+        val normalized = id.trim().lowercase()
+        return known.firstOrNull { provider -> provider.aliases.any { it.lowercase() == normalized } }
+            ?.displayName
+            ?: id
+    }
 }
 
 /**

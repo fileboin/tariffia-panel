@@ -1,5 +1,6 @@
 package com.tariffia.panel.ui
 
+import android.net.Uri
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -9,14 +10,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavDestination.Companion.hierarchy
+import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.navArgument
 import com.tariffia.panel.ui.screens.HomeScreen
+import com.tariffia.panel.ui.screens.ProviderDetailsScreen
 import com.tariffia.panel.ui.screens.ProvidersScreen
 import com.tariffia.panel.ui.screens.SettingsScreen
 import com.tariffia.panel.ui.screens.VpsScreen
+
+private const val PROVIDER_DETAILS_ROUTE = "provider/{providerId}"
+
+private fun providerDetailsRoute(providerId: String): String = "provider/${Uri.encode(providerId)}"
 
 /** The four MVP destinations. */
 enum class Destination(val route: String, val label: String) {
@@ -77,7 +85,16 @@ fun TariffiaApp() {
                             launchSingleTop = true
                         }
                     },
+                    onProviderClick = { row ->
+                        navController.navigate(providerDetailsRoute(row.id))
+                    },
                 )
+            }
+            composable(
+                route = PROVIDER_DETAILS_ROUTE,
+                arguments = listOf(navArgument("providerId") { type = NavType.StringType }),
+            ) {
+                ProviderDetailsScreen(onBack = { navController.popBackStack() })
             }
             composable(Destination.Settings.route) {
                 SettingsScreen()

@@ -18,9 +18,9 @@ import javax.crypto.spec.GCMParameterSpec
  * - GCM uses a fresh random IV per encryption (platform default); the IV is stored
  *   alongside the ciphertext.
  */
-internal class KeystoreCrypto(private val keyAlias: String) {
+internal class KeystoreCrypto(private val keyAlias: String) : SecretCipher {
 
-    fun encrypt(plain: String): String {
+    override fun encrypt(plain: String): String {
         val cipher = Cipher.getInstance(TRANSFORMATION)
         cipher.init(Cipher.ENCRYPT_MODE, secretKey())
         val iv = cipher.iv
@@ -28,7 +28,7 @@ internal class KeystoreCrypto(private val keyAlias: String) {
         return Base64.encodeToString(iv + cipherText, Base64.NO_WRAP)
     }
 
-    fun decrypt(encoded: String): String {
+    override fun decrypt(encoded: String): String {
         val bytes = Base64.decode(encoded, Base64.NO_WRAP)
         require(bytes.size > IV_LENGTH) { "Malformed ciphertext" }
         val iv = bytes.copyOfRange(0, IV_LENGTH)

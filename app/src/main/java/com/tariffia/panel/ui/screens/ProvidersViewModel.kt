@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.providers.ProviderRow
 import com.tariffia.panel.data.providers.ProviderStatusResolver
+import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.RouterClient
 import com.tariffia.panel.data.router.RouterResult
 import kotlinx.coroutines.Dispatchers
@@ -32,6 +33,7 @@ data class ProvidersUiState(
 class ProvidersViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SecureSettingsStore(application)
+    private val keyStore = SecureProviderKeyStore(application)
     private val client = RouterClient()
 
     private val _uiState = MutableStateFlow(ProvidersUiState())
@@ -49,18 +51,19 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
             val url = settings.routerUrl
 
             if (url.isBlank() || token.isNullOrBlank()) {
-                _uiState.update {
-                    it.copy(loadState = ProvidersLoadState.NOT_CONFIGURED, rows = ProviderStatusResolver.unknown())
-                }
+                val rows = enrich(ProviderStatusResolver.unknown())
+                _uiState.update { it.copy(loadState = ProvidersLoadState.NOT_CONFIGURED, rows = rows) }
                 return@launch
             }
 
             when (val result = client.fetchHealth(url, token)) {
                 is RouterResult.Success -> {
                     val health = result.value
-                    val rows = ProviderStatusResolver.resolve(
-                        configuredIds = health.providers,
-                        warnedReasons = health.warnings.associate { it.providerId to it.reason },
+                    val rows = enrich(
+                        ProviderStatusResolver.resolve(
+                            configuredIds = health.providers,
+                            warnedReasons = health.warnings.associate { it.providerId to it.reason },
+                        ),
                     )
                     _uiState.update {
                         it.copy(loadState = ProvidersLoadState.READY, errorMessage = null, rows = rows)
@@ -74,9 +77,14 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
-    private fun fail(message: String) {
+    /** Adds the local (device-only) key status to each row. Never decrypts a key. */
+    private suspend fun enrich(rows: List<ProviderRow>): List<ProviderRow> =
+        withContext(Dispatchers.IO) { rows.map { it.copy(hasLocalKey = keyStore.hasKey(it.id)) } }
+
+    private suspend fun fail(message: String) {
+        val rows = enrich(ProviderStatusResolver.unknown())
         _uiState.update {
-            it.copy(loadState = ProvidersLoadState.ERROR, errorMessage = message, rows = ProviderStatusResolver.unknown())
+            it.copy(loadState = ProvidersLoadState.ERROR, errorMessage = message, rows = rows)
         }
     }
 }
