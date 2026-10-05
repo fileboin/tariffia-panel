@@ -14,7 +14,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class ProvidersLoadState { LOADING, NOT_CONFIGURED, READY, ERROR }
@@ -35,6 +34,7 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
     private val store = SecureSettingsStore(application)
     private val keyStore = SecureProviderKeyStore(application)
     private val client = RouterClient()
+    private val refreshGuard = SingleFlightGuard()
 
     private val _uiState = MutableStateFlow(ProvidersUiState())
     val uiState: StateFlow<ProvidersUiState> = _uiState.asStateFlow()
@@ -44,8 +44,9 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun refresh() {
-        _uiState.update { it.copy(loadState = ProvidersLoadState.LOADING, errorMessage = null) }
-        viewModelScope.launch {
+        // Ignore a second refresh while one is already running.
+        refreshGuard.tryStart(viewModelScope) {
+            _uiState.update { it.copy(loadState = ProvidersLoadState.LOADING, errorMessage = null) }
             val settings = withContext(Dispatchers.IO) { store.load() }
             val token = withContext(Dispatchers.IO) { store.readToken() }
             val url = settings.routerUrl
@@ -53,26 +54,25 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
             if (url.isBlank() || token.isNullOrBlank()) {
                 val rows = enrich(ProviderStatusResolver.unknown())
                 _uiState.update { it.copy(loadState = ProvidersLoadState.NOT_CONFIGURED, rows = rows) }
-                return@launch
-            }
-
-            when (val result = client.fetchHealth(url, token)) {
-                is RouterResult.Success -> {
-                    val health = result.value
-                    val rows = enrich(
-                        ProviderStatusResolver.resolve(
-                            configuredIds = health.providers,
-                            warnedReasons = health.warnings.associate { it.providerId to it.reason },
-                        ),
-                    )
-                    _uiState.update {
-                        it.copy(loadState = ProvidersLoadState.READY, errorMessage = null, rows = rows)
+            } else {
+                when (val result = client.fetchHealth(url, token)) {
+                    is RouterResult.Success -> {
+                        val health = result.value
+                        val rows = enrich(
+                            ProviderStatusResolver.resolve(
+                                configuredIds = health.providers,
+                                warnedReasons = health.warnings.associate { it.providerId to it.reason },
+                            ),
+                        )
+                        _uiState.update {
+                            it.copy(loadState = ProvidersLoadState.READY, errorMessage = null, rows = rows)
+                        }
                     }
+                    RouterResult.AuthenticationFailed -> fail("Authentication failed.")
+                    is RouterResult.HttpError -> fail("Router returned HTTP ${result.code}.")
+                    is RouterResult.InvalidResponse -> fail(result.reason)
+                    is RouterResult.ConnectionFailed -> fail("Connection failed.")
                 }
-                RouterResult.AuthenticationFailed -> fail("Authentication failed.")
-                is RouterResult.HttpError -> fail("Router returned HTTP ${result.code}.")
-                is RouterResult.InvalidResponse -> fail(result.reason)
-                is RouterResult.ConnectionFailed -> fail("Connection failed.")
             }
         }
     }

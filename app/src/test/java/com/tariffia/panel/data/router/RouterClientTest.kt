@@ -1,11 +1,13 @@
 package com.tariffia.panel.data.router
 
 import kotlinx.coroutines.runBlocking
+import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
@@ -114,5 +116,18 @@ class RouterClientTest {
     @Test
     fun invalidUrlScheme_isConnectionFailedNotCrash() = runBlocking {
         assertTrue(client.checkHealth("ftp://example.com", "t") is RouterResult.ConnectionFailed)
+    }
+
+    @Test
+    fun usesInjectedHttpClient() = runBlocking {
+        val injectedClient = RouterClient(OkHttpClient())
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"status":"ok"}"""))
+        assertTrue(injectedClient.checkHealth(baseUrl(), "token") is RouterResult.Success)
+        assertEquals("/healthz", server.takeRequest().path)
+    }
+
+    @Test
+    fun sharedHttpClientIsSingleton() {
+        assertSame(SharedRouterHttpClient.instance, SharedRouterHttpClient.instance)
     }
 }

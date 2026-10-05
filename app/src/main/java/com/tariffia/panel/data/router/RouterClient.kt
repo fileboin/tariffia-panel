@@ -5,7 +5,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.IOException
-import java.util.concurrent.TimeUnit
 
 /**
  * Minimal HTTP client for the Tariffia Router. Only the two read-only endpoints the
@@ -13,9 +12,12 @@ import java.util.concurrent.TimeUnit
  *
  * The token is sent as `Authorization: Bearer <token>`. It is never logged and never
  * included in any error surfaced to callers (failures carry no response body).
+ *
+ * [httpClient] defaults to the shared, process-scoped [SharedRouterHttpClient]; this
+ * class does not own or close it. Tests may inject a client.
  */
 class RouterClient(
-    private val httpClient: OkHttpClient = defaultHttpClient(),
+    private val httpClient: OkHttpClient = SharedRouterHttpClient.instance,
 ) {
 
     suspend fun checkHealth(baseUrl: String, token: String?): RouterResult<Unit> =
@@ -72,9 +74,3 @@ class RouterClient(
         const val PATH_MODELS = "/v1/models"
     }
 }
-
-private fun defaultHttpClient(): OkHttpClient = OkHttpClient.Builder()
-    .connectTimeout(10, TimeUnit.SECONDS)
-    .readTimeout(15, TimeUnit.SECONDS)
-    .callTimeout(20, TimeUnit.SECONDS)
-    .build()
