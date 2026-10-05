@@ -26,8 +26,9 @@ Notes:
 
 Status: **early skeleton** — Kotlin + Compose app with four screens. Settings stores
 the router URL and, via the Android Keystore, the router token (masked input, never
-logged, never shown again once saved). Home/Status checks `GET /healthz` and lists
-`GET /v1/models` with `Authorization: Bearer`. VPS/SSH stores the profile and
+logged, never shown again once saved). Home/Status is a dashboard: `GET /healthz`
+(status + provider summary) and `GET /v1/models` (count + IDs) with
+`Authorization: Bearer`. VPS/SSH stores the profile and
 Keystore-encrypted private key/passphrase, pins the server host key after explicit
 user confirmation, and can Test Connection via JSch. Providers shows the status the
 router reports through `/healthz` (no new endpoint; Unknown when unreported) and lets
