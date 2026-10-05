@@ -7,6 +7,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
 import org.junit.Test
 
@@ -84,9 +85,10 @@ class RouterClientTest {
             MockResponse().setResponseCode(200)
                 .setBody("""{"data":[{"id":"m1"},{"id":"m2"}]}"""),
         )
-        val result = client.fetchModels(baseUrl(), "t")
-        assertTrue(result is RouterResult.Success)
-        assertEquals(listOf("m1", "m2"), (result as RouterResult.Success).value)
+        when (val result = client.fetchModels(baseUrl(), "t")) {
+            is RouterResult.Success -> assertEquals(listOf("m1", "m2"), result.value)
+            else -> fail("Expected Success but was $result")
+        }
     }
 
     @Test

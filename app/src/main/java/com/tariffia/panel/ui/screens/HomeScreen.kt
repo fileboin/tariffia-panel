@@ -101,7 +101,7 @@ fun HomeScreen(
 private fun StatusRow(status: HomeStatus) {
     val color = when (status) {
         HomeStatus.Online -> OnlineColor
-        HomeStatus.Offline, HomeStatus.AuthFailed -> OfflineColor
+        is HomeStatus.Offline, HomeStatus.AuthFailed -> OfflineColor
         else -> MaterialTheme.colorScheme.outline
     }
     val label = when (status) {
