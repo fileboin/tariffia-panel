@@ -7,11 +7,8 @@ import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.providers.ProviderCatalog
 import com.tariffia.panel.data.providers.ProviderKeyRules
-import com.tariffia.panel.data.providers.ProviderStatus
-import com.tariffia.panel.data.providers.ProviderStatusResolver
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.RouterClient
-import com.tariffia.panel.data.router.RouterResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,20 +20,24 @@ import kotlinx.coroutines.withContext
 data class ProviderDetailsUiState(
     val providerId: String = "",
     val displayName: String = "",
-    val routerStatus: ProviderStatus = ProviderStatus.UNKNOWN,
-    val routerNote: String? = null,
+    val routerStatusView: RouterStatusView = RouterStatusView.Loading,
     val hasStoredKey: Boolean = false,
     val keyInput: String = "",
     val keyVisible: Boolean = false,
     val isLoading: Boolean = true,
+    val isBusy: Boolean = false,
     val statusMessage: String? = null,
     val showClearConfirmation: Boolean = false,
 )
 
 /**
- * Provider details: shows the router-reported status next to the locally stored API
- * key status, and manages that key in the Android Keystore. This PR is local only —
- * the key is never sent anywhere.
+ * Provider details: shows the router-reported status (with explicit unavailable states)
+ * next to the locally stored API key status, and manages that key in the Android
+ * Keystore. This is local only — the key is never sent anywhere.
+ *
+ * Save and Clear share one [SingleFlightGuard], so a double tap or a Save/Clear race is
+ * ignored. Secrets are never placed in status messages and are cleared from UI state
+ * after saving.
  */
 class ProviderDetailsViewModel(
     application: Application,
@@ -46,6 +47,7 @@ class ProviderDetailsViewModel(
     private val settings = SecureSettingsStore(application)
     private val keyStore = SecureProviderKeyStore(application)
     private val client = RouterClient()
+    private val keyGuard = SingleFlightGuard()
 
     private val providerId: String = savedStateHandle.get<String>(ARG_PROVIDER_ID).orEmpty()
 
@@ -62,7 +64,7 @@ class ProviderDetailsViewModel(
     }
 
     fun load() {
-        _uiState.update { it.copy(isLoading = true, statusMessage = null) }
+        _uiState.update { it.copy(isLoading = true, statusMessage = null, routerStatusView = RouterStatusView.Loading) }
         viewModelScope.launch {
             val hasKey = withContext(Dispatchers.IO) { keyStore.hasKey(providerId) }
             _uiState.update { it.copy(hasStoredKey = hasKey) }
@@ -76,20 +78,12 @@ class ProviderDetailsViewModel(
         val token = withContext(Dispatchers.IO) { settings.readToken() }
         val url = settingsSnapshot.routerUrl
         if (url.isBlank() || token.isNullOrBlank()) {
-            _uiState.update { it.copy(routerStatus = ProviderStatus.UNKNOWN, routerNote = null) }
+            _uiState.update { it.copy(routerStatusView = RouterStatusView.RouterNotConfigured) }
             return
         }
-        when (val result = client.fetchHealth(url, token)) {
-            is RouterResult.Success -> {
-                val row = ProviderStatusResolver.resolve(
-                    configuredIds = result.value.providers,
-                    warnedReasons = result.value.warnings.associate { it.providerId to it.reason },
-                ).firstOrNull { it.id.equals(providerId, ignoreCase = true) }
-                _uiState.update {
-                    it.copy(routerStatus = row?.status ?: ProviderStatus.UNKNOWN, routerNote = row?.note)
-                }
-            }
-            else -> _uiState.update { it.copy(routerStatus = ProviderStatus.UNKNOWN, routerNote = null) }
+        val result = client.fetchHealth(url, token)
+        _uiState.update {
+            it.copy(routerStatusView = ProviderRouterStatusResolver.fromHealthResult(result, providerId))
         }
     }
 
@@ -107,20 +101,26 @@ class ProviderDetailsViewModel(
             _uiState.update { it.copy(statusMessage = "Enter an API key.") }
             return
         }
-        viewModelScope.launch {
-            val saved = withContext(Dispatchers.IO) { keyStore.saveKey(providerId, key) }
-            _uiState.update {
-                if (saved) {
-                    // Never keep the typed secret in UI state after saving.
-                    it.copy(
-                        hasStoredKey = true,
-                        keyInput = "",
-                        keyVisible = false,
-                        statusMessage = "API key saved.",
-                    )
-                } else {
-                    it.copy(statusMessage = "Could not save the API key.")
+        // Ignore a second Save (or a Clear) while a mutation is in flight.
+        keyGuard.tryStart(viewModelScope) {
+            _uiState.update { it.copy(isBusy = true, statusMessage = null) }
+            try {
+                val saved = withContext(Dispatchers.IO) { keyStore.saveKey(providerId, key) }
+                _uiState.update {
+                    if (saved) {
+                        // Never keep the typed secret in UI state after saving.
+                        it.copy(
+                            hasStoredKey = true,
+                            keyInput = "",
+                            keyVisible = false,
+                            statusMessage = "API key saved.",
+                        )
+                    } else {
+                        it.copy(statusMessage = "Could not save the API key.")
+                    }
                 }
+            } finally {
+                _uiState.update { it.copy(isBusy = false) }
             }
         }
     }
@@ -134,16 +134,22 @@ class ProviderDetailsViewModel(
     }
 
     fun confirmClear() {
-        viewModelScope.launch {
-            withContext(Dispatchers.IO) { keyStore.clearKey(providerId) }
-            _uiState.update {
-                it.copy(
-                    hasStoredKey = false,
-                    keyInput = "",
-                    keyVisible = false,
-                    showClearConfirmation = false,
-                    statusMessage = "API key cleared.",
-                )
+        // Shares the guard with Save so the two can never race.
+        keyGuard.tryStart(viewModelScope) {
+            _uiState.update { it.copy(isBusy = true) }
+            try {
+                withContext(Dispatchers.IO) { keyStore.clearKey(providerId) }
+                _uiState.update {
+                    it.copy(
+                        hasStoredKey = false,
+                        keyInput = "",
+                        keyVisible = false,
+                        showClearConfirmation = false,
+                        statusMessage = "API key cleared.",
+                    )
+                }
+            } finally {
+                _uiState.update { it.copy(isBusy = false) }
             }
         }
     }

@@ -41,4 +41,58 @@ class SingleFlightGuardTest {
             scope.cancel()
         }
     }
+
+    @Test
+    fun saveIsSingleFlight() = runBlocking {
+        val guard = SingleFlightGuard()
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val gate = CompletableDeferred<Unit>()
+            val saves = AtomicInteger(0)
+            assertTrue(guard.tryStart(scope) { saves.incrementAndGet(); gate.await() })
+            assertFalse(guard.tryStart(scope) { saves.incrementAndGet() })
+            gate.complete(Unit)
+            guard.join()
+            assertEquals(1, saves.get())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun clearIsSingleFlight() = runBlocking {
+        val guard = SingleFlightGuard()
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val gate = CompletableDeferred<Unit>()
+            val clears = AtomicInteger(0)
+            assertTrue(guard.tryStart(scope) { clears.incrementAndGet(); gate.await() })
+            assertFalse(guard.tryStart(scope) { clears.incrementAndGet() })
+            gate.complete(Unit)
+            guard.join()
+            assertEquals(1, clears.get())
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun saveAndClearShareOneGuardSoTheyCannotRace() = runBlocking {
+        // One guard is used for both mutations, so a Clear cannot start during a Save.
+        val guard = SingleFlightGuard()
+        val scope = CoroutineScope(Dispatchers.Default)
+        try {
+            val gate = CompletableDeferred<Unit>()
+            val saveRuns = AtomicInteger(0)
+            val clearRuns = AtomicInteger(0)
+            assertTrue(guard.tryStart(scope) { saveRuns.incrementAndGet(); gate.await() })
+            assertFalse(guard.tryStart(scope) { clearRuns.incrementAndGet() })
+            gate.complete(Unit)
+            guard.join()
+            assertEquals(1, saveRuns.get())
+            assertEquals(0, clearRuns.get())
+        } finally {
+            scope.cancel()
+        }
+    }
 }

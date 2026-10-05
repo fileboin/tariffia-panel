@@ -27,8 +27,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
 /**
- * Provider details: router-reported status is shown separately from the locally
- * stored API key status. The key is entered masked and is never read back.
+ * Provider details: router-reported status (with an explicit unavailable state) is shown
+ * separately from the locally stored API key status. The key is entered masked and is
+ * never read back.
  */
 @Composable
 fun ProviderDetailsScreen(
@@ -36,6 +37,7 @@ fun ProviderDetailsScreen(
     viewModel: ProviderDetailsViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val actionsEnabled = !state.isLoading && !state.isBusy
 
     Column(
         modifier = Modifier
@@ -54,22 +56,11 @@ fun ProviderDetailsScreen(
         }
 
         Text(text = "Router status", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = providerStatusLabel(state.routerStatus),
-            style = MaterialTheme.typography.bodyLarge,
-            color = providerStatusColor(state.routerStatus),
-        )
-        state.routerNote?.let { note ->
-            Text(
-                text = note,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-            )
-        }
+        RouterStatusContent(state.routerStatusView)
 
-        Text(text = "API key (stored locally)", style = MaterialTheme.typography.titleMedium)
+        Text(text = "API key", style = MaterialTheme.typography.titleMedium)
         Text(
-            text = "Status: ${if (state.hasStoredKey) "Configured" else "Not configured"}",
+            text = "API key stored locally: ${if (state.hasStoredKey) "Yes" else "No"}",
             style = MaterialTheme.typography.bodyLarge,
         )
         OutlinedTextField(
@@ -78,6 +69,7 @@ fun ProviderDetailsScreen(
             label = { Text("API key") },
             placeholder = { Text("Paste the provider API key") },
             singleLine = true,
+            enabled = actionsEnabled,
             visualTransformation = if (state.keyVisible) {
                 VisualTransformation.None
             } else {
@@ -99,7 +91,7 @@ fun ProviderDetailsScreen(
 
         Button(
             onClick = viewModel::saveKey,
-            enabled = !state.isLoading,
+            enabled = actionsEnabled,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Save API key")
@@ -107,7 +99,7 @@ fun ProviderDetailsScreen(
 
         OutlinedButton(
             onClick = viewModel::requestClear,
-            enabled = !state.isLoading && state.hasStoredKey,
+            enabled = actionsEnabled && state.hasStoredKey,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text("Clear API key")
@@ -127,8 +119,45 @@ fun ProviderDetailsScreen(
             onDismissRequest = viewModel::cancelClear,
             title = { Text("Clear API key?") },
             text = { Text("This removes the locally stored key for ${state.displayName}.") },
-            confirmButton = { TextButton(onClick = viewModel::confirmClear) { Text("Clear") } },
+            confirmButton = {
+                TextButton(onClick = viewModel::confirmClear, enabled = !state.isBusy) { Text("Clear") }
+            },
             dismissButton = { TextButton(onClick = viewModel::cancelClear) { Text("Cancel") } },
         )
+    }
+}
+
+@Composable
+private fun RouterStatusContent(view: RouterStatusView) {
+    when (view) {
+        RouterStatusView.Loading -> Text(
+            text = "Checking…",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        RouterStatusView.RouterNotConfigured -> Text(
+            text = "Router not configured. Set the router URL and token in Settings.",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        RouterStatusView.Unavailable -> Text(
+            text = "Router status unavailable.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        is RouterStatusView.Available -> {
+            Text(
+                text = providerStatusLabel(view.status),
+                style = MaterialTheme.typography.bodyLarge,
+                color = providerStatusColor(view.status),
+            )
+            view.note?.let { note ->
+                Text(
+                    text = note,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+        }
     }
 }
