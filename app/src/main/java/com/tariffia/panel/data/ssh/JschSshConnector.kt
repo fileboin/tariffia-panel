@@ -22,6 +22,10 @@ import kotlinx.coroutines.withContext
  * - If the presented key differs from [pinned], it is reported as
  *   [SshConnectOutcome.HostKeyChanged]. There is no auto-accept path.
  *
+ * A successful handshake + authentication is [SshConnectOutcome.Connected]. The fixed
+ * `true` exec check afterwards is best-effort: a server that forbids exec must not turn
+ * a successful authentication into a failure.
+ *
  * The private key and passphrase are never logged and never included in errors.
  */
 class JschSshConnector : SshConnector {
@@ -43,10 +47,10 @@ class JschSshConnector : SshConnector {
             return@withContext SshConnectOutcome.Failed("Could not load the SSH private key.")
         }
 
-        var session: Session? = null
+        var connecting: Session? = null
         var presented: HostKeyIdentity? = null
         try {
-            session = jsch.getSession(profile.username, profile.host, profile.port).apply {
+            val opened = jsch.getSession(profile.username, profile.host, profile.port).apply {
                 setConfig("StrictHostKeyChecking", "yes")
                 setConfig("PreferredAuthentications", "publickey")
                 setHostKeyRepository(object : HostKeyRepository {
@@ -69,24 +73,32 @@ class JschSshConnector : SshConnector {
                     override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
                 })
             }
-            session.connect(CONNECT_TIMEOUT_MS)
-            runFixedCheck(session)
-            session.disconnect()
-            SshConnectOutcome.Connected
+            connecting = opened
+            opened.connect(CONNECT_TIMEOUT_MS)
         } catch (e: JSchException) {
-            session?.disconnect()
-            mapException(e, pinned, presented)
+            runCatching { connecting?.disconnect() }
+            return@withContext mapException(e, pinned, presented)
         } catch (e: Exception) {
-            session?.disconnect()
-            SshConnectOutcome.Failed("Connection failed.")
+            runCatching { connecting?.disconnect() }
+            return@withContext SshConnectOutcome.Failed("Connection failed.")
+        }
+
+        val session = connecting
+            ?: return@withContext SshConnectOutcome.Failed("Connection failed.")
+        try {
+            val execCheckSucceeded = runFixedCheckQuietly(session)
+            return@withContext SshOutcomeMapper.afterAuthentication(execCheckSucceeded)
+        } finally {
+            runCatching { session.disconnect() }
         }
     }
 
     /**
-     * Fixed, harmless check that does not change the system: run `true` over an exec
-     * channel and let it finish. Confirms the session channel opens after auth.
+     * Best-effort, harmless check that does not change the system: run `true` over an
+     * exec channel. Returns true if the channel ran, false if the server forbids exec.
+     * A false result must never be treated as an authentication or connection failure.
      */
-    private fun runFixedCheck(session: Session) {
+    private fun runFixedCheckQuietly(session: Session): Boolean = try {
         val channel = session.openChannel("exec") as ChannelExec
         channel.setCommand("true")
         channel.connect(CHANNEL_TIMEOUT_MS)
@@ -95,32 +107,16 @@ class JschSshConnector : SshConnector {
             Thread.sleep(POLL_INTERVAL_MS)
         }
         channel.disconnect()
+        true
+    } catch (ignored: Exception) {
+        false
     }
 
     private fun mapException(
         e: JSchException,
         pinned: HostKeyPin?,
         presented: HostKeyIdentity?,
-    ): SshConnectOutcome {
-        val message = e.message.orEmpty()
-        return when {
-            message.contains("UnknownHostKey", ignoreCase = true) ->
-                presented?.let { SshConnectOutcome.HostKeyUnknown(it) }
-                    ?: SshConnectOutcome.Failed("Host key not received.")
-
-            message.contains("changed", ignoreCase = true) ->
-                if (pinned != null && presented != null) {
-                    SshConnectOutcome.HostKeyChanged(pinned, presented)
-                } else {
-                    SshConnectOutcome.Failed("Host key changed.")
-                }
-
-            message.contains("auth", ignoreCase = true) ->
-                SshConnectOutcome.AuthenticationFailed
-
-            else -> SshConnectOutcome.Failed("Connection failed.")
-        }
-    }
+    ): SshConnectOutcome = SshOutcomeMapper.fromFailure(e.message.orEmpty(), pinned, presented)
 
     private companion object {
         const val IDENTITY_NAME = "tariffia-panel"
