@@ -2,16 +2,23 @@ package com.tariffia.panel.data.router
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.net.URLEncoder
 
 /**
- * Minimal HTTP client for the Tariffia Router. Only the two read-only endpoints the
- * Home screen needs are implemented: `GET /healthz` and `GET /v1/models`.
+ * Minimal HTTP client for the Tariffia Router.
  *
- * The token is sent as `Authorization: Bearer <token>`. It is never logged and never
- * included in any error surfaced to callers (failures carry no response body).
+ * Read-only endpoints: `GET /healthz` and `GET /v1/models`. It also writes a single
+ * provider key: `PUT /v1/providers/{providerId}/key`, the narrow key-sync route.
+ *
+ * The token is sent as `Authorization: Bearer <token>`. It is never logged, and no
+ * failure carries a response body or the key.
  *
  * [httpClient] defaults to the shared, process-scoped [SharedRouterHttpClient]; this
  * class does not own or close it. Tests may inject a client.
@@ -41,6 +48,21 @@ class RouterClient(
             }
         }
 
+    /**
+     * Sends a provider API key to the Router's key-sync route. The key is placed in the
+     * request body only; it is never logged and never surfaced in the result.
+     */
+    suspend fun syncProviderKey(
+        baseUrl: String,
+        token: String?,
+        providerId: String,
+        key: String,
+    ): RouterResult<Unit> {
+        val path = "/v1/providers/${URLEncoder.encode(providerId, "UTF-8")}/key"
+        val jsonBody = buildJsonObject { put("key", key) }.toString()
+        return requestWithBody(baseUrl, path, token, jsonBody) { RouterResult.Success(Unit) }
+    }
+
     private suspend fun <T> request(
         baseUrl: String,
         path: String,
@@ -69,8 +91,38 @@ class RouterClient(
         }
     }
 
+    private suspend fun <T> requestWithBody(
+        baseUrl: String,
+        path: String,
+        token: String?,
+        jsonBody: String,
+        onSuccess: (body: String) -> RouterResult<T>,
+    ): RouterResult<T> = withContext(Dispatchers.IO) {
+        try {
+            val requestBuilder = Request.Builder()
+                .url(baseUrl.trimEnd('/') + path)
+                .put(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
+                .header("Accept", "application/json")
+            if (!token.isNullOrBlank()) {
+                requestBuilder.header("Authorization", "Bearer $token")
+            }
+            httpClient.newCall(requestBuilder.build()).execute().use { response ->
+                when {
+                    response.isSuccessful -> onSuccess(response.body?.string().orEmpty())
+                    response.code == 401 || response.code == 403 -> RouterResult.AuthenticationFailed
+                    else -> RouterResult.HttpError(response.code)
+                }
+            }
+        } catch (e: IOException) {
+            RouterResult.ConnectionFailed("Connection failed")
+        } catch (e: IllegalArgumentException) {
+            RouterResult.ConnectionFailed("Invalid router URL")
+        }
+    }
+
     private companion object {
         const val PATH_HEALTHZ = "/healthz"
         const val PATH_MODELS = "/v1/models"
+        val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -129,5 +130,69 @@ class RouterClientTest {
     @Test
     fun sharedHttpClientIsSingleton() {
         assertSame(SharedRouterHttpClient.instance, SharedRouterHttpClient.instance)
+    }
+
+    @Test
+    fun syncProviderKey_success_sendsPutWithKeyAndAuth() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"ok":true,"provider":"openai","configured":true}"""),
+        )
+        val result = client.syncProviderKey(baseUrl(), "token", "openai", DUMMY_KEY)
+        assertTrue(result is RouterResult.Success)
+        val recorded = server.takeRequest()
+        assertEquals("PUT", recorded.method)
+        assertEquals("/v1/providers/openai/key", recorded.path)
+        assertEquals("Bearer token", recorded.getHeader("Authorization"))
+        assertTrue(recorded.body.readUtf8().contains(DUMMY_KEY))
+    }
+
+    @Test
+    fun syncProviderKey_401_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(
+            RouterResult.AuthenticationFailed,
+            client.syncProviderKey(baseUrl(), "t", "openai", DUMMY_KEY),
+        )
+    }
+
+    @Test
+    fun syncProviderKey_403_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(403))
+        assertEquals(
+            RouterResult.AuthenticationFailed,
+            client.syncProviderKey(baseUrl(), "t", "openai", DUMMY_KEY),
+        )
+    }
+
+    @Test
+    fun syncProviderKey_404_isHttpError() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(
+            RouterResult.HttpError(404),
+            client.syncProviderKey(baseUrl(), "t", "openai", DUMMY_KEY),
+        )
+    }
+
+    @Test
+    fun syncProviderKey_unreachable_isConnectionFailed() = runBlocking {
+        val url = baseUrl()
+        server.shutdown()
+        val result = client.syncProviderKey(url, "t", "openai", DUMMY_KEY)
+        assertTrue(result is RouterResult.ConnectionFailed)
+        assertFalse(result.toString().contains(DUMMY_KEY))
+    }
+
+    @Test
+    fun syncProviderKey_failureNeverCarriesTheKey() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(500).setBody("server exploded"))
+        val result = client.syncProviderKey(baseUrl(), "t", "openai", DUMMY_KEY)
+        assertEquals(RouterResult.HttpError(500), result)
+        assertFalse(result.toString().contains(DUMMY_KEY))
+    }
+
+    private companion object {
+        // A dummy value, not a real secret.
+        const val DUMMY_KEY = "dummy-provider-key-value"
     }
 }

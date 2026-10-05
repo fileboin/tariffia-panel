@@ -105,6 +105,14 @@ fun ProviderDetailsScreen(
             Text("Clear API key")
         }
 
+        OutlinedButton(
+            onClick = viewModel::syncKeyToRouter,
+            enabled = actionsEnabled && state.hasStoredKey,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Sync to Router")
+        }
+
         state.statusMessage?.let { message ->
             Text(
                 text = message,
