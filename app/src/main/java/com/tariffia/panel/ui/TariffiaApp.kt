@@ -16,6 +16,7 @@ import androidx.navigation.compose.rememberNavController
 import com.tariffia.panel.ui.screens.HomeScreen
 import com.tariffia.panel.ui.screens.PlaceholderScreen
 import com.tariffia.panel.ui.screens.SettingsScreen
+import com.tariffia.panel.ui.screens.VpsScreen
 
 /** The four MVP destinations. */
 enum class Destination(val route: String, val label: String) {
@@ -67,7 +68,7 @@ fun TariffiaApp() {
                 )
             }
             composable(Destination.Vps.route) {
-                PlaceholderScreen("VPS / SSH", "VPS host, SSH key and test connection will go here.")
+                VpsScreen()
             }
             composable(Destination.Providers.route) {
                 PlaceholderScreen("Providers", "Provider API keys and configured status will go here.")
