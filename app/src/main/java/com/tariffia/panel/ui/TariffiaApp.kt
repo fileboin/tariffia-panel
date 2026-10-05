@@ -13,6 +13,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.tariffia.panel.ui.screens.HomeScreen
 import com.tariffia.panel.ui.screens.PlaceholderScreen
 import com.tariffia.panel.ui.screens.SettingsScreen
 
@@ -57,7 +58,13 @@ fun TariffiaApp() {
             modifier = Modifier.padding(innerPadding),
         ) {
             composable(Destination.Home.route) {
-                PlaceholderScreen("Home / Status", "Router, Ollama and provider status will appear here.")
+                HomeScreen(
+                    onOpenSettings = {
+                        navController.navigate(Destination.Settings.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                )
             }
             composable(Destination.Vps.route) {
                 PlaceholderScreen("VPS / SSH", "VPS host, SSH key and test connection will go here.")
