@@ -40,4 +40,15 @@ object SettingsRules {
      * the real token length so it does not leak any information about the secret.
      */
     fun maskedTokenHint(): String = "••••••••"
+
+    /** Blank input means "keep the stored token"; non-blank replaces it. */
+    fun shouldReplaceToken(tokenInput: String): Boolean = tokenInput.isNotBlank()
+
+    /** Stored-token state after saving with the given input. */
+    fun hasTokenAfterSave(currentlyStored: Boolean, tokenInput: String): Boolean =
+        currentlyStored || shouldReplaceToken(tokenInput)
+
+    /** The only two token statuses shown to the user. */
+    fun tokenStatusLabel(hasStoredToken: Boolean): String =
+        if (hasStoredToken) "Stored securely" else "Not configured"
 }

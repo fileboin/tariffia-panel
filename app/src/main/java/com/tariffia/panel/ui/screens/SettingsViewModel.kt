@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.SettingsRules
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,14 +21,18 @@ import kotlinx.coroutines.withContext
 data class SettingsUiState(
     val routerUrl: String = "",
     val tokenInput: String = "",
+    val tokenVisible: Boolean = false,
     val hasSavedToken: Boolean = false,
     val isLoading: Boolean = true,
+    val isSaving: Boolean = false,
     val statusMessage: String? = null,
+    val showClearConfirmation: Boolean = false,
 )
 
 class SettingsViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SecureSettingsStore(application)
+    private var saveJob: Job? = null
 
     private val _uiState = MutableStateFlow(SettingsUiState())
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
@@ -53,23 +58,54 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         _uiState.update { it.copy(tokenInput = value, statusMessage = null) }
     }
 
+    fun onToggleTokenVisibility() {
+        _uiState.update { it.copy(tokenVisible = !it.tokenVisible) }
+    }
+
     fun save() {
+        // Ignore a second save while one is already running.
+        if (saveJob?.isActive == true) return
         val current = _uiState.value
         val normalized = SettingsRules.normalizeUrl(current.routerUrl)
         if (!SettingsRules.isValidUrl(normalized)) {
             _uiState.update { it.copy(statusMessage = "Enter a valid http(s) router URL.") }
             return
         }
-        val replacingToken = current.tokenInput.isNotBlank()
-        viewModelScope.launch {
+        _uiState.update { it.copy(isSaving = true, statusMessage = null) }
+        saveJob = viewModelScope.launch {
             withContext(Dispatchers.IO) { store.save(normalized, current.tokenInput) }
             _uiState.update {
                 it.copy(
                     routerUrl = normalized,
                     // Never keep the typed secret in UI state after saving.
                     tokenInput = "",
-                    hasSavedToken = it.hasSavedToken || replacingToken,
-                    statusMessage = "Saved.",
+                    tokenVisible = false,
+                    hasSavedToken = SettingsRules.hasTokenAfterSave(it.hasSavedToken, current.tokenInput),
+                    isSaving = false,
+                    statusMessage = "Settings saved.",
+                )
+            }
+        }
+    }
+
+    fun requestClearToken() {
+        _uiState.update { it.copy(showClearConfirmation = true) }
+    }
+
+    fun cancelClearToken() {
+        _uiState.update { it.copy(showClearConfirmation = false) }
+    }
+
+    fun confirmClearToken() {
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { store.clearToken() }
+            _uiState.update {
+                it.copy(
+                    hasSavedToken = false,
+                    tokenInput = "",
+                    tokenVisible = false,
+                    showClearConfirmation = false,
+                    statusMessage = "Router token cleared.",
                 )
             }
         }

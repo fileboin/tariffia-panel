@@ -34,6 +34,7 @@ class SettingsRulesTest {
     fun isValidUrl_acceptsHttpAndHttpsWithHost() {
         assertTrue(SettingsRules.isValidUrl("https://router.example.com"))
         assertTrue(SettingsRules.isValidUrl("http://127.0.0.1:8910"))
+        assertTrue(SettingsRules.isValidUrl("https://router.example.com/api/v1"))
     }
 
     @Test
@@ -48,5 +49,35 @@ class SettingsRulesTest {
     @Test
     fun maskedTokenHint_isFixedWidthAndDoesNotReflectInput() {
         assertEquals(8, SettingsRules.maskedTokenHint().length)
+    }
+
+    @Test
+    fun shouldReplaceToken_blankKeepsStored() {
+        assertFalse(SettingsRules.shouldReplaceToken(""))
+        assertFalse(SettingsRules.shouldReplaceToken("   "))
+    }
+
+    @Test
+    fun shouldReplaceToken_nonBlankReplaces() {
+        assertTrue(SettingsRules.shouldReplaceToken("token-value"))
+        assertTrue(SettingsRules.shouldReplaceToken("  token-value  "))
+    }
+
+    @Test
+    fun hasTokenAfterSave_keepsExistingWhenInputBlank() {
+        assertTrue(SettingsRules.hasTokenAfterSave(currentlyStored = true, tokenInput = ""))
+        assertFalse(SettingsRules.hasTokenAfterSave(currentlyStored = false, tokenInput = ""))
+    }
+
+    @Test
+    fun hasTokenAfterSave_setsWhenInputProvided() {
+        assertTrue(SettingsRules.hasTokenAfterSave(currentlyStored = false, tokenInput = "token-value"))
+        assertTrue(SettingsRules.hasTokenAfterSave(currentlyStored = true, tokenInput = "token-value"))
+    }
+
+    @Test
+    fun tokenStatusLabel_onlyTwoStatuses() {
+        assertEquals("Stored securely", SettingsRules.tokenStatusLabel(hasStoredToken = true))
+        assertEquals("Not configured", SettingsRules.tokenStatusLabel(hasStoredToken = false))
     }
 }
