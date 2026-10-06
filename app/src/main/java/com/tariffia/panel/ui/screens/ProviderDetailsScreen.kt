@@ -27,6 +27,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tariffia.panel.data.router.CandidateHealth
 import com.tariffia.panel.data.router.ModelWithHealth
+import com.tariffia.panel.data.router.RouterUsage
+import com.tariffia.panel.data.router.usageForModel
 import kotlin.math.roundToInt
 
 /**
@@ -69,7 +71,7 @@ fun ProviderDetailsScreen(
                 color = MaterialTheme.colorScheme.outline,
             )
         } else {
-            state.models.forEach { item -> ModelItem(item) }
+            state.models.forEach { item -> ModelItem(item, state.usage) }
         }
 
         Text(text = "API key", style = MaterialTheme.typography.titleMedium)
@@ -186,7 +188,7 @@ private fun RouterStatusContent(view: RouterStatusView) {
 
 /** Read-only Router model metadata + observed reliability. Never shows a key, token or header. */
 @Composable
-private fun ModelItem(item: ModelWithHealth) {
+private fun ModelItem(item: ModelWithHealth, usage: RouterUsage?) {
     val model = item.model
     Column(
         modifier = Modifier
@@ -219,7 +221,41 @@ private fun ModelItem(item: ModelWithHealth) {
             )
         }
         ReliabilityContent(item.health)
+        UsageContent(usage = usage, modelId = model.id)
     }
+}
+
+/**
+ * Read-only Router usage/cost for this model TODAY (Router PR-D). Null usage (endpoint
+ * unavailable, not configured, or no entry) shows "No usage yet" — never a computed value.
+ */
+@Composable
+private fun UsageContent(usage: RouterUsage?, modelId: String) {
+    val model = usage?.let { usageForModel(it.today, modelId) }
+    if (model == null) {
+        Text(
+            text = "Usage today: No usage yet",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        return
+    }
+    Text(
+        text = "Usage today: ${model.requests} req · ${formatCount(model.totalTokens)} tokens " +
+            "(${formatCount(model.inputTokens)} in / ${formatCount(model.outputTokens)} out) · " +
+            costLabel(model.costUsd),
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+    )
+}
+
+private fun formatCount(n: Long): String = "%,d".format(n)
+
+/** The Router's cost value; never recomputed here. */
+private fun costLabel(cost: Double): String {
+    if (cost == 0.0) return "$0.00"
+    val trimmed = "%.6f".format(cost).trimEnd('0').trimEnd('.')
+    return "\$$trimmed"
 }
 
 /** Router-observed reliability. A missing entry is "no data", never a fabricated value. */

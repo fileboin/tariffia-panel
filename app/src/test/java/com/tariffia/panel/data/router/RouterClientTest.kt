@@ -272,6 +272,51 @@ class RouterClientTest {
         assertTrue(client.fetchModelCatalog(url, "t") is RouterResult.ConnectionFailed)
     }
 
+    @Test
+    fun fetchUsage_success_hitsUsagePathWithAuth() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"day":"2026-10-06","today":{"totals":{"requests":1,"totalTokens":15}}}""",
+            ),
+        )
+        when (val result = client.fetchUsage(baseUrl(), "token")) {
+            is RouterResult.Success -> {
+                assertEquals("2026-10-06", result.value.day)
+                assertEquals(1L, result.value.today.totals.requests)
+                assertEquals(15L, result.value.today.totals.totalTokens)
+            }
+            else -> fail("Expected Success but was $result")
+        }
+        val recorded = server.takeRequest()
+        assertEquals("/v1/usage", recorded.path)
+        assertEquals("Bearer token", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun fetchUsage_malformedBody_isInvalidResponse() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        assertTrue(client.fetchUsage(baseUrl(), "t") is RouterResult.InvalidResponse)
+    }
+
+    @Test
+    fun fetchUsage_401_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(RouterResult.AuthenticationFailed, client.fetchUsage(baseUrl(), "t"))
+    }
+
+    @Test
+    fun fetchUsage_404_isHttpError() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(RouterResult.HttpError(404), client.fetchUsage(baseUrl(), "t"))
+    }
+
+    @Test
+    fun fetchUsage_unreachable_isConnectionFailed() = runBlocking {
+        val url = baseUrl()
+        server.shutdown()
+        assertTrue(client.fetchUsage(url, "t") is RouterResult.ConnectionFailed)
+    }
+
     private companion object {
         // A dummy value, not a real secret.
         const val DUMMY_KEY = "dummy-provider-key-value"

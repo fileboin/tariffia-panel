@@ -77,6 +77,20 @@ class RouterClient(
         }
 
     /**
+     * Reads the Router's usage/cost aggregates (`GET /v1/usage`, Router PR-D). Read-only
+     * and metadata only; the response carries no key/secret field. The Router is the
+     * single source of truth — the Panel never computes usage.
+     */
+    suspend fun fetchUsage(baseUrl: String, token: String?): RouterResult<RouterUsage> =
+        request(baseUrl, PATH_USAGE, token) { body ->
+            try {
+                RouterResult.Success(parseUsage(body))
+            } catch (e: Exception) {
+                RouterResult.InvalidResponse("Could not parse the usage response.")
+            }
+        }
+
+    /**
      * Sends a provider API key to the Router's key-sync route. The key is placed in the
      * request body only; it is never logged and never surfaced in the result.
      */
@@ -152,6 +166,7 @@ class RouterClient(
         const val PATH_HEALTHZ = "/healthz"
         const val PATH_MODELS = "/v1/models"
         const val PATH_PROVIDERS = "/v1/providers"
+        const val PATH_USAGE = "/v1/usage"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

@@ -12,6 +12,7 @@ import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.ModelWithHealth
 import com.tariffia.panel.data.router.RouterClient
 import com.tariffia.panel.data.router.RouterResult
+import com.tariffia.panel.data.router.RouterUsage
 import com.tariffia.panel.data.router.modelsForProvider
 import com.tariffia.panel.data.router.modelsWithHealth
 import kotlinx.coroutines.Dispatchers
@@ -28,6 +29,8 @@ data class ProviderDetailsUiState(
     val routerStatusView: RouterStatusView = RouterStatusView.Loading,
     /** Router-reported, read-only model metadata for this provider, with reliability. */
     val models: List<ModelWithHealth> = emptyList(),
+    /** Router-reported, read-only usage/cost (null when unavailable or not configured). */
+    val usage: RouterUsage? = null,
     val hasStoredKey: Boolean = false,
     val keyInput: String = "",
     val keyVisible: Boolean = false,
@@ -99,7 +102,11 @@ class ProviderDetailsViewModel(
         val url = settingsSnapshot.routerUrl
         if (url.isBlank() || token.isNullOrBlank()) {
             _uiState.update {
-                it.copy(routerStatusView = RouterStatusView.RouterNotConfigured, models = emptyList())
+                it.copy(
+                    routerStatusView = RouterStatusView.RouterNotConfigured,
+                    models = emptyList(),
+                    usage = null,
+                )
             }
             return
         }
@@ -118,7 +125,13 @@ class ProviderDetailsViewModel(
                 modelsWithHealth(modelsForProvider(catalog.value, providerId), observedHealth)
             else -> emptyList()
         }
-        _uiState.update { it.copy(models = models) }
+        // Best-effort, read-only usage (Router PR-D). Unavailable/404 -> null (no usage
+        // shown); the provider status/key UI is unaffected.
+        val usage = when (val usageResult = client.fetchUsage(url, token)) {
+            is RouterResult.Success -> usageResult.value
+            else -> null
+        }
+        _uiState.update { it.copy(models = models, usage = usage) }
     }
 
     fun onKeyChange(value: String) {
