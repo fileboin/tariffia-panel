@@ -236,7 +236,7 @@ private fun ReliabilityContent(health: CandidateHealth?) {
     Text(
         text = "Reliability: ${if (health.open) "Open (cooling down)" else "Healthy"}",
         style = MaterialTheme.typography.bodySmall,
-        color = if (health.open) ErrorColor else ConfiguredColor,
+        color = if (health.open) NotConfiguredColor else ConfiguredColor,
     )
     val stats = buildList {
         health.ewmaMs?.let { add("Latency: $it ms") }
