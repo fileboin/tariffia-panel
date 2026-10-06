@@ -1,8 +1,8 @@
 package com.tariffia.panel.data.router
 
 import android.content.Context
+import com.tariffia.panel.data.SecureSettingsStore
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -16,17 +16,16 @@ import java.util.zip.ZipInputStream
  * + `registry` bundle is extracted from assets into the app files dir, environment
  * variables are set before boot, and `node::Start()` runs on a dedicated thread.
  *
- * PR1 scope only: a single start with a temporary local test token. The Router is
- * bound to 127.0.0.1:8910. No key sync, no foreground service, no production lifecycle.
+ * PR2: the Router URL is auto-set to loopback and a local random bearer token is
+ * generated once and stored (encrypted) in [SecureSettingsStore]; the same token is
+ * passed to the Router as `TARIFFIA_TOKEN`. Readiness is a bounded `/healthz` poll
+ * using that token. No key sync, no foreground service, no production lifecycle.
  */
 object RouterRuntime {
 
     const val HOST = "127.0.0.1"
     const val PORT = 8910
-    const val BASE_URL = "http://$HOST:$PORT"
-
-    /** Temporary PR1 token shared by the started Router and the readiness check. */
-    const val TEST_TOKEN = "panel-local-test-token-0000000000000000"
+    const val BASE_URL = RouterLocalConfig.LOCAL_URL
 
     private const val ROUTER_DIR_NAME = "router"
     private const val DIST_ZIP_ASSET = "router-dist.zip"
@@ -37,6 +36,10 @@ object RouterRuntime {
 
     @Volatile
     private var started = false
+
+    /** Token the running Router was started with; used by the readiness probe. */
+    @Volatile
+    private var activeToken: String? = null
 
     private val client = RouterClient()
 
@@ -62,6 +65,22 @@ object RouterRuntime {
     private fun routerDir(ctx: Context): File = File(ctx.filesDir, ROUTER_DIR_NAME)
 
     private fun infoFile(ctx: Context): File = File(ctx.filesDir, "node-info.json")
+
+    /**
+     * Ensures the embedded Router config exists: URL = loopback, token = the stored
+     * one or a freshly generated random token. Reuses [SecureSettingsStore] (Keystore
+     * encryption) — no separate storage.
+     */
+    fun ensureLocalConfig(ctx: Context): RouterLocalConfig.Resolved {
+        val store = SecureSettingsStore(ctx)
+        val resolved = RouterLocalConfig.resolve(store.readToken()) { RouterToken.generate() }
+        // Persist the loopback URL; store the token only when it was just generated.
+        store.save(
+            RouterLocalConfig.LOCAL_URL,
+            if (resolved.tokenWasGenerated) resolved.token else null,
+        )
+        return resolved
+    }
 
     /** Extracts the unmodified Router bundle (dist/ + registry/) on first use. */
     private fun ensureRuntime(ctx: Context): File {
@@ -108,6 +127,13 @@ object RouterRuntime {
             return StartResult(false, "could not prepare runtime: ${e.message}")
         }
 
+        val config = try {
+            ensureLocalConfig(ctx)
+        } catch (e: Exception) {
+            return StartResult(false, "could not prepare router config: ${e.message}")
+        }
+        activeToken = config.token
+
         val launcher = File(root, LAUNCHER_ASSET).absolutePath
         val entry = File(root, "dist/src/cli/index.js").absolutePath
         val registry = File(root, "registry/ollama.json").absolutePath
@@ -117,7 +143,7 @@ object RouterRuntime {
         val env = arrayOf(
             "TARIFFIA_HOST", HOST,
             "TARIFFIA_PORT", PORT.toString(),
-            "TARIFFIA_TOKEN", TEST_TOKEN,
+            "TARIFFIA_TOKEN", config.token,
             "TARIFFIA_MODE", "FREE_ONLY",
             "TARIFFIA_REGISTRY", registry,
             "TMPDIR", ctx.cacheDir.absolutePath,
@@ -140,21 +166,27 @@ object RouterRuntime {
     }
 
     /**
+     * One-shot `/healthz` probe with the stored token. Used to detect an already
+     * running Router so a second Node/Router process is never started.
+     */
+    suspend fun isHealthyNow(ctx: Context): Boolean = withContext(Dispatchers.IO) {
+        val config = ensureLocalConfig(ctx)
+        client.fetchHealth(config.url, config.token) is RouterResult.Success
+    }
+
+    /**
      * Bounded readiness check: polls `GET /healthz` (with the Router bearer token)
      * until it returns 200 or the timeout elapses.
      */
     suspend fun awaitHealthy(
-        baseUrl: String = BASE_URL,
-        token: String = TEST_TOKEN,
+        ctx: Context,
         timeoutMs: Long = HEALTH_TIMEOUT_MS,
     ): Boolean = withContext(Dispatchers.IO) {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (System.currentTimeMillis() < deadline) {
-            when (client.fetchHealth(baseUrl, token)) {
-                is RouterResult.Success -> return@withContext true
-                else -> delay(HEALTH_POLL_INTERVAL_MS)
-            }
-        }
-        false
+        val token = activeToken ?: ensureLocalConfig(ctx).token
+        ReadinessWaiter.awaitReady(
+            timeoutMs = timeoutMs,
+            pollIntervalMs = HEALTH_POLL_INTERVAL_MS,
+            probe = { client.fetchHealth(BASE_URL, token) is RouterResult.Success },
+        )
     }
 }

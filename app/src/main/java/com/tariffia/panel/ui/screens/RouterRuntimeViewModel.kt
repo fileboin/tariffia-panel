@@ -33,12 +33,19 @@ class RouterRuntimeViewModel(application: Application) : AndroidViewModel(applic
         viewModelScope.launch {
             // Guard the whole native bring-up: a missing/incompatible libnode must
             // surface as an ERROR, never as a crash.
+            val app = getApplication<Application>()
             val outcome = try {
-                val result = RouterRuntime.start(getApplication())
                 when {
-                    !result.started -> RouterRuntimeStatus.Error(result.message)
-                    RouterRuntime.awaitHealthy() -> RouterRuntimeStatus.Ready
-                    else -> RouterRuntimeStatus.Error("Router did not answer /healthz on 127.0.0.1:8910.")
+                    // Already listening (e.g. Router still up): do not start a second process.
+                    RouterRuntime.isHealthyNow(app) -> RouterRuntimeStatus.Ready
+                    else -> {
+                        val result = RouterRuntime.start(app)
+                        when {
+                            !result.started -> RouterRuntimeStatus.Error(result.message)
+                            RouterRuntime.awaitHealthy(app) -> RouterRuntimeStatus.Ready
+                            else -> RouterRuntimeStatus.Error("Router did not answer /healthz on 127.0.0.1:8910.")
+                        }
+                    }
                 }
             } catch (t: Throwable) {
                 RouterRuntimeStatus.Error("runtime init failed: ${t.message}")
