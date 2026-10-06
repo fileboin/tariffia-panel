@@ -2,7 +2,12 @@ package com.tariffia.panel.data.router
 
 import android.content.Context
 import com.tariffia.panel.data.SecureSettingsStore
+import com.tariffia.panel.data.providers.ProviderKeySyncRunner
+import com.tariffia.panel.data.providers.summaryText
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -16,10 +21,10 @@ import java.util.zip.ZipInputStream
  * + `registry` bundle is extracted from assets into the app files dir, environment
  * variables are set before boot, and `node::Start()` runs on a dedicated thread.
  *
- * PR2: the Router URL is auto-set to loopback and a local random bearer token is
- * generated once and stored (encrypted) in [SecureSettingsStore]; the same token is
- * passed to the Router as `TARIFFIA_TOKEN`. Readiness is a bounded `/healthz` poll
- * using that token. No key sync, no foreground service, no production lifecycle.
+ * PR4: [RouterService] is the only component that drives this runtime; the state and
+ * the key-sync summary are exposed as flows for the UI. The singleton and its native
+ * one-instance guard are preserved. Embedded Node has no graceful shutdown/restart
+ * path, so [markStopped] only updates state before the service terminates the process.
  */
 object RouterRuntime {
 
@@ -34,12 +39,27 @@ object RouterRuntime {
     private const val HEALTH_TIMEOUT_MS = 20_000L
     private const val HEALTH_POLL_INTERVAL_MS = 500L
 
+    /** Runtime state for the UI. No secrets. */
+    sealed interface State {
+        data object Idle : State
+        data object Starting : State
+        data object Ready : State
+        data object Stopped : State
+        data class Error(val message: String) : State
+    }
+
     @Volatile
     private var started = false
 
     /** Token the running Router was started with; used by the readiness probe. */
     @Volatile
     private var activeToken: String? = null
+
+    private val _state = MutableStateFlow<State>(State.Idle)
+    val state: StateFlow<State> = _state.asStateFlow()
+
+    private val _syncSummary = MutableStateFlow<String?>(null)
+    val syncSummary: StateFlow<String?> = _syncSummary.asStateFlow()
 
     private val client = RouterClient()
 
@@ -188,5 +208,63 @@ object RouterRuntime {
             pollIntervalMs = HEALTH_POLL_INTERVAL_MS,
             probe = { client.fetchHealth(BASE_URL, token) is RouterResult.Success },
         )
+    }
+
+    /**
+     * Brings the Router up (idempotent) and, once READY, syncs every locally stored
+     * provider key (PR3 logic, unchanged). Updates [state] and [syncSummary].
+     * Returns true when the Router is READY.
+     */
+    suspend fun bringUp(ctx: Context): Boolean {
+        if (_state.value is State.Ready) return true
+        _state.value = State.Starting
+        _syncSummary.value = null
+
+        val outcome = try {
+            val healthy = if (isHealthyNow(ctx)) {
+                true
+            } else {
+                val result = start(ctx)
+                if (!result.started) {
+                    _state.value = RouterStateMapping.from(false, false, result.message)
+                    return false
+                }
+                awaitHealthy(ctx)
+            }
+            RouterStateMapping.from(
+                started = true,
+                healthy = healthy,
+                failureMessage = "Router did not answer /healthz on 127.0.0.1:8910.",
+            )
+        } catch (t: Throwable) {
+            State.Error("runtime init failed: ${t.message}")
+        }
+
+        _state.value = outcome
+        if (outcome is State.Ready) {
+            syncProviderKeys(ctx)
+            return true
+        }
+        return false
+    }
+
+    /** After READY, push every locally stored provider key to the Router (PR3). */
+    private suspend fun syncProviderKeys(ctx: Context) {
+        _syncSummary.value = "Key sync: running…"
+        _syncSummary.value = try {
+            val config = ensureLocalConfig(ctx)
+            ProviderKeySyncRunner.syncToLocalRouter(ctx, config.url, config.token).summaryText()
+        } catch (t: Throwable) {
+            "Key sync failed: ${t.message}"
+        }
+    }
+
+    /**
+     * Marks the runtime as stopped. Embedded Node has no graceful shutdown/restart
+     * path, so this only updates state; [RouterService] then terminates the process.
+     */
+    fun markStopped() {
+        _state.value = State.Stopped
+        _syncSummary.value = null
     }
 }

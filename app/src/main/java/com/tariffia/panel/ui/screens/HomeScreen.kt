@@ -1,5 +1,10 @@
 package com.tariffia.panel.ui.screens
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,6 +19,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -21,8 +27,11 @@ import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tariffia.panel.data.router.RouterRuntime
 
 private val OnlineColor = Color(0xFF2E7D32)
 private val ErrorColor = Color(0xFFC62828)
@@ -40,6 +49,11 @@ fun HomeScreen(
     val state by viewModel.uiState.collectAsState()
     val runtimeStatus by routerRuntimeViewModel.state.collectAsState()
     val syncSummary by routerRuntimeViewModel.syncSummary.collectAsState()
+    val context = LocalContext.current
+    // Request the notification permission (Android 13+) but never block startup on it.
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* granted or denied: the service runs either way */ }
 
     Column(
         modifier = Modifier
@@ -60,7 +74,18 @@ fun HomeScreen(
         RouterRuntimeCard(
             status = runtimeStatus,
             syncSummary = syncSummary,
-            onStart = routerRuntimeViewModel::start,
+            onStart = {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                    ContextCompat.checkSelfPermission(
+                        context,
+                        Manifest.permission.POST_NOTIFICATIONS,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                }
+                routerRuntimeViewModel.start(context)
+            },
+            onStop = { routerRuntimeViewModel.stop(context) },
         )
 
         StatusCard(state.status)
@@ -216,13 +241,15 @@ private fun statusColor(status: HomeStatus): Color = when (status) {
     else -> ErrorColor
 }
 
-/** PR1 temporary control for the embedded Router runtime (start + bounded readiness). */
+/** Controls the embedded Router runtime via its foreground service. */
 @Composable
 private fun RouterRuntimeCard(
-    status: RouterRuntimeStatus,
+    status: RouterRuntime.State,
     syncSummary: String?,
     onStart: () -> Unit,
+    onStop: () -> Unit,
 ) {
+    val running = status is RouterRuntime.State.Starting || status is RouterRuntime.State.Ready
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -238,7 +265,7 @@ private fun RouterRuntimeCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(text = routerRuntimeLabel(status), style = MaterialTheme.typography.bodyMedium)
             }
-            if (status is RouterRuntimeStatus.Error) {
+            if (status is RouterRuntime.State.Error) {
                 Text(
                     text = status.message,
                     style = MaterialTheme.typography.bodySmall,
@@ -252,30 +279,47 @@ private fun RouterRuntimeCard(
                     color = MaterialTheme.colorScheme.outline,
                 )
             }
-            Button(
-                onClick = onStart,
-                enabled = status !is RouterRuntimeStatus.Starting && status !is RouterRuntimeStatus.Ready,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Start Router")
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = onStart,
+                    enabled = !running,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Start Router")
+                }
+                OutlinedButton(
+                    onClick = onStop,
+                    enabled = running,
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("STOP")
+                }
             }
-            if (status is RouterRuntimeStatus.Starting) {
+            Text(
+                text = "STOP terminates the whole Panel process (the embedded Node runtime " +
+                    "cannot be shut down gracefully).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            if (status is RouterRuntime.State.Starting) {
                 LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
             }
         }
     }
 }
 
-private fun routerRuntimeLabel(status: RouterRuntimeStatus): String = when (status) {
-    RouterRuntimeStatus.Idle -> "Not started"
-    RouterRuntimeStatus.Starting -> "STARTING…"
-    RouterRuntimeStatus.Ready -> "READY (127.0.0.1:8910)"
-    is RouterRuntimeStatus.Error -> "ERROR"
+private fun routerRuntimeLabel(status: RouterRuntime.State): String = when (status) {
+    RouterRuntime.State.Idle -> "Not started"
+    RouterRuntime.State.Starting -> "STARTING…"
+    RouterRuntime.State.Ready -> "READY (127.0.0.1:8910)"
+    RouterRuntime.State.Stopped -> "STOPPED"
+    is RouterRuntime.State.Error -> "ERROR"
 }
 
 @Composable
-private fun routerRuntimeColor(status: RouterRuntimeStatus): Color = when (status) {
-    RouterRuntimeStatus.Ready -> OnlineColor
-    RouterRuntimeStatus.Starting, RouterRuntimeStatus.Idle -> MaterialTheme.colorScheme.outline
-    is RouterRuntimeStatus.Error -> ErrorColor
+private fun routerRuntimeColor(status: RouterRuntime.State): Color = when (status) {
+    RouterRuntime.State.Ready -> OnlineColor
+    RouterRuntime.State.Starting, RouterRuntime.State.Idle, RouterRuntime.State.Stopped ->
+        MaterialTheme.colorScheme.outline
+    is RouterRuntime.State.Error -> ErrorColor
 }
