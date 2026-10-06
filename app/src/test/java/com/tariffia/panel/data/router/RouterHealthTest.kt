@@ -46,6 +46,14 @@ class RouterHealthTest {
     }
 
     @Test
+    fun fractionalEwmaRoundsToDomainLong() {
+        // The Router's EWMA latency is fractional (e.g. 420.7); it must still decode.
+        val body = """{"health":{"a/b":{"open":false,"openForMs":0,"ewmaMs":420.7,"attempts":2,"successRate":0.5}}}"""
+        val candidate = parseHealth(body).health.getValue("a/b")
+        assertEquals(421L, candidate.ewmaMs)
+    }
+
+    @Test
     fun missingMeasurementsStayNullNotZero() {
         val body = """{"health":{"a/b":{"open":false,"attempts":0}}}"""
         val candidate = parseHealth(body).health.getValue("a/b")

@@ -1,6 +1,7 @@
 package com.tariffia.panel.data.router
 
 import kotlinx.serialization.Serializable
+import kotlin.math.roundToLong
 
 /**
  * The subset of `GET /healthz` the Panel uses. The router reports `providers` (IDs that
@@ -47,7 +48,9 @@ internal data class WarningEntry(
 internal data class CandidateHealthEntry(
     val open: Boolean = false,
     val openForMs: Long = 0,
-    val ewmaMs: Long? = null,
+    // The Router's EWMA latency is fractional (e.g. 420.7); decode as a number and
+    // round to the domain type below.
+    val ewmaMs: Double? = null,
     val attempts: Int = 0,
     val successRate: Double? = null,
 )
@@ -67,7 +70,7 @@ internal fun parseHealth(body: String): RouterHealth {
             CandidateHealth(
                 open = entry.open,
                 openForMs = entry.openForMs,
-                ewmaMs = entry.ewmaMs,
+                ewmaMs = entry.ewmaMs?.roundToLong(),
                 attempts = entry.attempts,
                 successRate = entry.successRate,
             )
