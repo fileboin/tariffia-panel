@@ -18,7 +18,7 @@ internal data class ProvidersResponse(
 )
 
 @Serializable
-internal data class RouterProvider(
+data class RouterProvider(
     val id: String,
     val summary: String? = null,
     val freeTierNote: String? = null,
