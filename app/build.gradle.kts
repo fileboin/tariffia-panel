@@ -7,6 +7,7 @@ plugins {
 android {
     namespace = "com.tariffia.panel"
     compileSdk = 34
+    ndkVersion = "27.3.13750724"
 
     defaultConfig {
         applicationId = "com.tariffia.panel"
@@ -14,6 +15,32 @@ android {
         targetSdk = 34
         versionCode = 1
         versionName = "0.0.1"
+
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
+
+        externalNativeBuild {
+            cmake {
+                // Match the STL used by the prebuilt libnode.so (DT_NEEDED libc++_shared.so).
+                arguments += listOf("-DANDROID_STL=c++_shared")
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    // Keep native libraries uncompressed so the 16 KB page-size alignment of the
+    // .so files inside the APK is meaningful and testable.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
+        }
     }
 
     buildTypes {

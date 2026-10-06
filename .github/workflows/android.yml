@@ -14,6 +14,12 @@ concurrency:
   group: android-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  FOGTAPE_ZIP_URL: https://github.com/fogtape/nodejs-mobile/releases/download/v24.21.0-0/nodejs-mobile-android-24.21.0-0.zip
+  FOGTAPE_ZIP_SHA256: e3cd29a1be03405f11dd5c857af8cd3ad13f84f1409ea648f5328f0bada5bd76
+  LIBNODE_SHA256: 955b308b1dfdf7662e8fe5ee4eb8c0c7d0a313f2d306387f2307529993c4bc32
+  NDK_VERSION: 27.3.13750724
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -35,7 +41,34 @@ jobs:
           SDKMANAGER=$(ls "$ANDROID_HOME"/cmdline-tools/*/bin/sdkmanager 2>/dev/null | head -1)
           echo "Using sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
-          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-34" "build-tools;34.0.0" "build-tools;35.0.0" "cmake;3.22.1" || true
+
+      - name: Download and verify fogtape libnode (pinned)
+        run: |
+          set -euo pipefail
+          curl -fsSL "$FOGTAPE_ZIP_URL" -o /tmp/njm.zip
+          echo "verifying release ZIP sha256..."
+          echo "$FOGTAPE_ZIP_SHA256  /tmp/njm.zip" | sha256sum -c -
+          mkdir -p /tmp/njm
+          unzip -q /tmp/njm.zip -d /tmp/njm
+          test -f /tmp/njm/bin/arm64-v8a/libnode.so
+          echo "verifying arm64 libnode.so sha256..."
+          echo "$LIBNODE_SHA256  /tmp/njm/bin/arm64-v8a/libnode.so" | sha256sum -c -
+          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/cpp/include
+          cp /tmp/njm/bin/arm64-v8a/libnode.so app/src/main/jniLibs/arm64-v8a/libnode.so
+          cp -r /tmp/njm/include/node app/src/main/cpp/include/node
+          echo "staged libnode + headers:"
+          ls -l app/src/main/jniLibs/arm64-v8a/
+
+      - name: Locate matching libc++_shared.so from the same NDK
+        run: |
+          set -euo pipefail
+          NDK="$ANDROID_HOME/ndk/$NDK_VERSION"
+          test -d "$NDK" || { echo "NDK $NDK_VERSION not found"; ls "$ANDROID_HOME/ndk"; exit 1; }
+          STL="$NDK/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/aarch64-linux-android/libc++_shared.so"
+          test -f "$STL" || { echo "libc++_shared.so not found"; exit 1; }
+          echo "libc++_shared.so: $STL"
+          sha256sum "$STL"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -47,6 +80,54 @@ jobs:
 
       - name: Build debug APK and run unit tests
         run: ./gradlew --no-daemon assembleDebug testDebugUnitTest --stacktrace
+
+      - name: Verify ELF 16 KB alignment (libnode + native bridge)
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, struct, sys
+
+          def aligns(path):
+              f = open(path, 'rb').read()
+              assert f[:4] == b'\x7fELF', f'{path}: not ELF'
+              e_phoff = struct.unpack_from('<Q', f, 32)[0]
+              e_phentsize = struct.unpack_from('<H', f, 54)[0]
+              e_phnum = struct.unpack_from('<H', f, 56)[0]
+              out = set()
+              for i in range(e_phnum):
+                  o = e_phoff + i * e_phentsize
+                  if struct.unpack_from('<I', f, o)[0] == 1:  # PT_LOAD
+                      out.add(struct.unpack_from('<Q', f, o + 48)[0])
+              return out
+
+          targets = ['app/src/main/jniLibs/arm64-v8a/libnode.so']
+          targets += glob.glob('app/build/**/libnodepoc.so', recursive=True)
+          ok = True
+          for t in targets:
+              a = aligns(t)
+              good = all(x >= 0x4000 for x in a)
+              print(f'{t}: PT_LOAD aligns={[hex(x) for x in a]} 16KB={good}')
+              ok = ok and good
+          if not ok:
+              sys.exit('16 KB alignment check FAILED')
+          print('ELF 16 KB alignment: OK')
+          PY
+
+      - name: Verify APK contents and page alignment
+        run: |
+          set -euo pipefail
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          echo "APK: $APK"
+          ls -l "$APK"
+          ZIPALIGN=$(ls "$ANDROID_HOME"/build-tools/35.0.0/zipalign | head -1)
+          echo "zipalign: $ZIPALIGN"
+          "$ZIPALIGN" -c -P 16 -v 4 "$APK"
+          echo "--- native libs inside APK ---"
+          unzip -l "$APK" | grep -E "lib/arm64-v8a/" || { echo "no native libs found"; exit 1; }
+          for lib in libnode.so libnodepoc.so libc++_shared.so; do
+            unzip -l "$APK" | grep -q "lib/arm64-v8a/$lib" || { echo "MISSING $lib in APK"; exit 1; }
+          done
+          echo "all expected native libs present"
 
       - name: Upload debug APK
         uses: actions/upload-artifact@v4

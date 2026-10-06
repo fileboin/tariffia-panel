@@ -8,6 +8,10 @@ captures/
 .externalNativeBuild/
 .cxx/
 
+# Native runtime staged by CI (never committed)
+app/src/main/jniLibs/**/*.so
+app/src/main/cpp/include/
+
 # IDE
 .idea/
 *.iml

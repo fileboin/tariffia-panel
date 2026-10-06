@@ -35,8 +35,10 @@ private val ErrorColor = Color(0xFFC62828)
 fun HomeScreen(
     onOpenSettings: () -> Unit,
     viewModel: HomeViewModel = viewModel(),
+    routerRuntimeViewModel: RouterRuntimeViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val runtimeStatus by routerRuntimeViewModel.state.collectAsState()
 
     Column(
         modifier = Modifier
@@ -53,6 +55,8 @@ fun HomeScreen(
                 color = MaterialTheme.colorScheme.outline,
             )
         }
+
+        RouterRuntimeCard(status = runtimeStatus, onStart = routerRuntimeViewModel::start)
 
         StatusCard(state.status)
 
@@ -205,4 +209,57 @@ private fun statusColor(status: HomeStatus): Color = when (status) {
     HomeStatus.Online -> OnlineColor
     HomeStatus.Checking, HomeStatus.NotConfigured -> MaterialTheme.colorScheme.outline
     else -> ErrorColor
+}
+
+/** PR1 temporary control for the embedded Router runtime (start + bounded readiness). */
+@Composable
+private fun RouterRuntimeCard(status: RouterRuntimeStatus, onStart: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(text = "Embedded Router runtime", style = MaterialTheme.typography.titleMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = "●",
+                    color = routerRuntimeColor(status),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = routerRuntimeLabel(status), style = MaterialTheme.typography.bodyMedium)
+            }
+            if (status is RouterRuntimeStatus.Error) {
+                Text(
+                    text = status.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = ErrorColor,
+                )
+            }
+            Button(
+                onClick = onStart,
+                enabled = status !is RouterRuntimeStatus.Starting && status !is RouterRuntimeStatus.Ready,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Start Router")
+            }
+            if (status is RouterRuntimeStatus.Starting) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+        }
+    }
+}
+
+private fun routerRuntimeLabel(status: RouterRuntimeStatus): String = when (status) {
+    RouterRuntimeStatus.Idle -> "Not started"
+    RouterRuntimeStatus.Starting -> "STARTING…"
+    RouterRuntimeStatus.Ready -> "READY (127.0.0.1:8910)"
+    is RouterRuntimeStatus.Error -> "ERROR"
+}
+
+@Composable
+private fun routerRuntimeColor(status: RouterRuntimeStatus): Color = when (status) {
+    RouterRuntimeStatus.Ready -> OnlineColor
+    RouterRuntimeStatus.Starting, RouterRuntimeStatus.Idle -> MaterialTheme.colorScheme.outline
+    is RouterRuntimeStatus.Error -> ErrorColor
 }
