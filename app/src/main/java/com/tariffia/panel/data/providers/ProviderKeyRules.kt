@@ -33,5 +33,15 @@ object ProviderKeyRules {
         return "$STORAGE_PREFIX$id"
     }
 
+    /**
+     * Inverse of [storageKey]: extracts the provider ID from a storage key, or null
+     * when the entry is not a valid provider-key slot. Used to enumerate stored keys.
+     */
+    fun providerIdFromStorageKey(storageKey: String): String? {
+        if (!storageKey.startsWith(STORAGE_PREFIX)) return null
+        val id = storageKey.removePrefix(STORAGE_PREFIX)
+        return if (isValidProviderId(id)) id else null
+    }
+
     private const val STORAGE_PREFIX = "provider_key_enc_"
 }

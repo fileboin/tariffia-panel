@@ -11,6 +11,9 @@ internal interface ProviderKeyBackend {
     fun get(key: String): String?
     fun remove(key: String)
     fun contains(key: String): Boolean
+
+    /** All storage keys currently present. Never values; used to enumerate providers. */
+    fun keys(): List<String>
 }
 
 /**
@@ -72,6 +75,15 @@ class SecureProviderKeyStore internal constructor(
         }
     }
 
+    /**
+     * The provider IDs that currently have a stored key, sorted. Read-only and never
+     * decrypts; used to sync every locally stored key without a separate registry.
+     */
+    fun providerIdsWithKeys(): List<String> =
+        backend.keys()
+            .mapNotNull { ProviderKeyRules.providerIdFromStorageKey(it) }
+            .sorted()
+
     /** Removes the stored key for one provider. No-op for an invalid ID. */
     fun clearKey(providerId: String) {
         val id = ProviderKeyRules.normalizeProviderId(providerId)
@@ -100,6 +112,8 @@ private class SharedPrefsProviderKeyBackend(context: Context) : ProviderKeyBacke
     }
 
     override fun contains(key: String): Boolean = prefs.contains(key)
+
+    override fun keys(): List<String> = prefs.all.keys.toList()
 
     private companion object {
         const val PREFS_NAME = "tariffia_provider_keys"

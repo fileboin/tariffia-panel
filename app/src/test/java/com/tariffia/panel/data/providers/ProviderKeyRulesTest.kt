@@ -3,6 +3,7 @@ package com.tariffia.panel.data.providers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -36,6 +37,13 @@ class ProviderKeyRulesTest {
     fun storageKey_isNamespacedPerProvider() {
         assertEquals("provider_key_enc_openai", ProviderKeyRules.storageKey("OpenAI"))
         assertNotEquals(ProviderKeyRules.storageKey("openai"), ProviderKeyRules.storageKey("together"))
+    }
+
+    @Test
+    fun providerIdFromStorageKey_roundTripsAndRejectsOthers() {
+        assertEquals("openai", ProviderKeyRules.providerIdFromStorageKey(ProviderKeyRules.storageKey("OpenAI")))
+        assertNull(ProviderKeyRules.providerIdFromStorageKey("unrelated"))
+        assertNull(ProviderKeyRules.providerIdFromStorageKey("provider_key_enc_bad id"))
     }
 
     @Test

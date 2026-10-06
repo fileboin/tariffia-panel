@@ -20,6 +20,7 @@ class SecureProviderKeyStoreTest {
         override fun get(key: String): String? = entries[key]
         override fun remove(key: String) { entries.remove(key) }
         override fun contains(key: String): Boolean = entries.containsKey(key)
+        override fun keys(): List<String> = entries.keys.toList()
     }
 
     private class FakeCipher : SecretCipher {
@@ -98,5 +99,22 @@ class SecureProviderKeyStoreTest {
     @Test
     fun readMissingKeyIsNull() {
         assertNull(store.readKey("openai"))
+    }
+
+    @Test
+    fun providerIdsWithKeysListsOnlyStoredProviders() {
+        store.saveKey("openai", "k1")
+        store.saveKey("deepinfra", "k2")
+        assertEquals(listOf("deepinfra", "openai"), store.providerIdsWithKeys())
+
+        store.clearKey("openai")
+        assertEquals(listOf("deepinfra"), store.providerIdsWithKeys())
+    }
+
+    @Test
+    fun providerIdsWithKeysIgnoresUnrelatedEntries() {
+        backend.put("some_other_pref", "x")
+        store.saveKey("openai", "k")
+        assertEquals(listOf("openai"), store.providerIdsWithKeys())
     }
 }

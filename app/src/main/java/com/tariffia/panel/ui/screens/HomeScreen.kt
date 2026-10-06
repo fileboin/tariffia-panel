@@ -39,6 +39,7 @@ fun HomeScreen(
 ) {
     val state by viewModel.uiState.collectAsState()
     val runtimeStatus by routerRuntimeViewModel.state.collectAsState()
+    val syncSummary by routerRuntimeViewModel.syncSummary.collectAsState()
 
     Column(
         modifier = Modifier
@@ -56,7 +57,11 @@ fun HomeScreen(
             )
         }
 
-        RouterRuntimeCard(status = runtimeStatus, onStart = routerRuntimeViewModel::start)
+        RouterRuntimeCard(
+            status = runtimeStatus,
+            syncSummary = syncSummary,
+            onStart = routerRuntimeViewModel::start,
+        )
 
         StatusCard(state.status)
 
@@ -213,7 +218,11 @@ private fun statusColor(status: HomeStatus): Color = when (status) {
 
 /** PR1 temporary control for the embedded Router runtime (start + bounded readiness). */
 @Composable
-private fun RouterRuntimeCard(status: RouterRuntimeStatus, onStart: () -> Unit) {
+private fun RouterRuntimeCard(
+    status: RouterRuntimeStatus,
+    syncSummary: String?,
+    onStart: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -234,6 +243,13 @@ private fun RouterRuntimeCard(status: RouterRuntimeStatus, onStart: () -> Unit) 
                     text = status.message,
                     style = MaterialTheme.typography.bodySmall,
                     color = ErrorColor,
+                )
+            }
+            syncSummary?.let { summary ->
+                Text(
+                    text = summary,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.outline,
                 )
             }
             Button(
