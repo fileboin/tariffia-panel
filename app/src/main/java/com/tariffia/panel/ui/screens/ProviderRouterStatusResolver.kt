@@ -31,11 +31,12 @@ object ProviderRouterStatusResolver {
     fun fromHealthResult(result: RouterResult<RouterHealth>, providerId: String): RouterStatusView =
         when (result) {
             is RouterResult.Success -> {
-                val row = ProviderStatusResolver.resolve(
+                val (status, note) = ProviderStatusResolver.statusFor(
+                    providerId = providerId,
                     configuredIds = result.value.providers,
                     warnedReasons = result.value.warnings.associate { it.providerId to it.reason },
-                ).firstOrNull { it.id.equals(providerId, ignoreCase = true) }
-                RouterStatusView.Available(row?.status ?: ProviderStatus.UNKNOWN, row?.note)
+                )
+                RouterStatusView.Available(status, note)
             }
             else -> RouterStatusView.Unavailable
         }

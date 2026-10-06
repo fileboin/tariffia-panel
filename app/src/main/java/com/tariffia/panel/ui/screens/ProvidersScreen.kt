@@ -68,7 +68,7 @@ fun ProvidersScreen(
             }
             ProvidersLoadState.READY -> {
                 Text(
-                    text = "Router status from /healthz. Tap a provider for details.",
+                    text = "Providers from the Router (/v1/providers). Tap a provider for details.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.outline,
                 )
@@ -110,11 +110,35 @@ private fun ProviderRowItem(row: ProviderRow, onClick: () -> Unit) {
             )
         }
         Text(
+            text = row.id,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        row.summary?.let { summary ->
+            Text(text = summary, style = MaterialTheme.typography.bodySmall)
+        }
+        val meta = buildList {
+            add("${row.modelCount} model${if (row.modelCount == 1) "" else "s"}")
+            if (row.keyless) add("no key needed")
+        }.joinToString(" · ")
+        Text(
+            text = meta,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        Text(
             text = "API key stored locally: ${if (row.hasLocalKey) "Yes" else "No"}",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.outline,
         )
         row.note?.let { note ->
+            Text(
+                text = note,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        row.freeTierNote?.let { note ->
             Text(
                 text = note,
                 style = MaterialTheme.typography.bodySmall,

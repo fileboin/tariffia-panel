@@ -191,6 +191,44 @@ class RouterClientTest {
         assertFalse(result.toString().contains(DUMMY_KEY))
     }
 
+    @Test
+    fun fetchProviders_success_returnsProvidersAndAuth() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"providers":[{"id":"openai","configured":true,"models":2}]}"""),
+        )
+        when (val result = client.fetchProviders(baseUrl(), "token")) {
+            is RouterResult.Success -> {
+                assertEquals(1, result.value.size)
+                assertEquals("openai", result.value.single().id)
+                assertEquals(2, result.value.single().models)
+            }
+            else -> fail("Expected Success but was $result")
+        }
+        val recorded = server.takeRequest()
+        assertEquals("/v1/providers", recorded.path)
+        assertEquals("Bearer token", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun fetchProviders_malformedBody_isInvalidResponse() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        assertTrue(client.fetchProviders(baseUrl(), "t") is RouterResult.InvalidResponse)
+    }
+
+    @Test
+    fun fetchProviders_401_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(RouterResult.AuthenticationFailed, client.fetchProviders(baseUrl(), "t"))
+    }
+
+    @Test
+    fun fetchProviders_unreachable_isConnectionFailed() = runBlocking {
+        val url = baseUrl()
+        server.shutdown()
+        assertTrue(client.fetchProviders(url, "t") is RouterResult.ConnectionFailed)
+    }
+
     private companion object {
         // A dummy value, not a real secret.
         const val DUMMY_KEY = "dummy-provider-key-value"

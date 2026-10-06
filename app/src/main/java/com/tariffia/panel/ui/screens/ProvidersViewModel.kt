@@ -4,10 +4,12 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
+import com.tariffia.panel.data.providers.ProviderFacts
 import com.tariffia.panel.data.providers.ProviderRow
 import com.tariffia.panel.data.providers.ProviderStatusResolver
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.RouterClient
+import com.tariffia.panel.data.router.RouterProvider
 import com.tariffia.panel.data.router.RouterResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,13 +23,13 @@ enum class ProvidersLoadState { LOADING, NOT_CONFIGURED, READY, ERROR }
 data class ProvidersUiState(
     val loadState: ProvidersLoadState = ProvidersLoadState.LOADING,
     val errorMessage: String? = null,
-    val rows: List<ProviderRow> = ProviderStatusResolver.unknown(),
+    val rows: List<ProviderRow> = emptyList(),
 )
 
 /**
- * Reads the provider configuration the router exposes through the existing
- * `/healthz` status (loaded provider IDs and load-time warnings). No new endpoint is
- * used and no status is invented: anything the router does not mention is Unknown.
+ * Reads the provider list from the Router (`GET /v1/providers`) — the single source of
+ * truth — and combines it with `/healthz` warnings and the local (device-only) key
+ * status. The Panel never invents provider rows and never hard-codes a provider list.
  */
 class ProvidersViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -52,39 +54,50 @@ class ProvidersViewModel(application: Application) : AndroidViewModel(applicatio
             val url = settings.routerUrl
 
             if (url.isBlank() || token.isNullOrBlank()) {
-                val rows = enrich(ProviderStatusResolver.unknown())
-                _uiState.update { it.copy(loadState = ProvidersLoadState.NOT_CONFIGURED, rows = rows) }
-            } else {
-                when (val result = client.fetchHealth(url, token)) {
-                    is RouterResult.Success -> {
-                        val health = result.value
-                        val rows = enrich(
-                            ProviderStatusResolver.resolve(
-                                configuredIds = health.providers,
-                                warnedReasons = health.warnings.associate { it.providerId to it.reason },
-                            ),
+                _uiState.update { it.copy(loadState = ProvidersLoadState.NOT_CONFIGURED, rows = emptyList()) }
+                return@tryStart
+            }
+
+            when (val providers = client.fetchProviders(url, token)) {
+                is RouterResult.Success -> {
+                    // /healthz supplies warning reasons only; the provider list itself
+                    // (and `configured`) already came from /v1/providers.
+                    val warnings = (client.fetchHealth(url, token) as? RouterResult.Success)
+                        ?.value
+                        ?.warnings
+                        ?.associate { it.providerId to it.reason }
+                        ?: emptyMap()
+                    val rows = withContext(Dispatchers.IO) {
+                        ProviderStatusResolver.resolve(
+                            facts = providers.value.map { it.toFacts() },
+                            warnedReasons = warnings,
+                            hasLocalKey = { id -> keyStore.hasKey(id) },
                         )
-                        _uiState.update {
-                            it.copy(loadState = ProvidersLoadState.READY, errorMessage = null, rows = rows)
-                        }
                     }
-                    RouterResult.AuthenticationFailed -> fail("Authentication failed.")
-                    is RouterResult.HttpError -> fail("Router returned HTTP ${result.code}.")
-                    is RouterResult.InvalidResponse -> fail(result.reason)
-                    is RouterResult.ConnectionFailed -> fail("Connection failed.")
+                    _uiState.update {
+                        it.copy(loadState = ProvidersLoadState.READY, errorMessage = null, rows = rows)
+                    }
                 }
+                RouterResult.AuthenticationFailed -> fail("Authentication failed.")
+                is RouterResult.HttpError -> fail("Router returned HTTP ${providers.code}.")
+                is RouterResult.InvalidResponse -> fail(providers.reason)
+                is RouterResult.ConnectionFailed -> fail("Connection failed.")
             }
         }
     }
 
-    /** Adds the local (device-only) key status to each row. Never decrypts a key. */
-    private suspend fun enrich(rows: List<ProviderRow>): List<ProviderRow> =
-        withContext(Dispatchers.IO) { rows.map { it.copy(hasLocalKey = keyStore.hasKey(it.id)) } }
+    private fun RouterProvider.toFacts() = ProviderFacts(
+        id = id,
+        configured = configured,
+        keyless = keyless,
+        modelCount = models,
+        summary = summary,
+        freeTierNote = freeTierNote,
+    )
 
     private suspend fun fail(message: String) {
-        val rows = enrich(ProviderStatusResolver.unknown())
         _uiState.update {
-            it.copy(loadState = ProvidersLoadState.ERROR, errorMessage = message, rows = rows)
+            it.copy(loadState = ProvidersLoadState.ERROR, errorMessage = message, rows = emptyList())
         }
     }
 }

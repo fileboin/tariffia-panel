@@ -49,6 +49,20 @@ class RouterClient(
         }
 
     /**
+     * Reads the Router's provider list and metadata (`GET /v1/providers`). The Router
+     * registry is the single source of truth; no provider list is hard-coded in Panel.
+     * The response carries no key/secret field.
+     */
+    suspend fun fetchProviders(baseUrl: String, token: String?): RouterResult<List<RouterProvider>> =
+        request(baseUrl, PATH_PROVIDERS, token) { body ->
+            try {
+                RouterResult.Success(parseProviders(body))
+            } catch (e: Exception) {
+                RouterResult.InvalidResponse("Could not parse the providers response.")
+            }
+        }
+
+    /**
      * Sends a provider API key to the Router's key-sync route. The key is placed in the
      * request body only; it is never logged and never surfaced in the result.
      */
@@ -123,6 +137,7 @@ class RouterClient(
     private companion object {
         const val PATH_HEALTHZ = "/healthz"
         const val PATH_MODELS = "/v1/models"
+        const val PATH_PROVIDERS = "/v1/providers"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

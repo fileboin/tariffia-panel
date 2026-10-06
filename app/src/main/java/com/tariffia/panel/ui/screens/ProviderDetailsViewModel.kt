@@ -5,7 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
-import com.tariffia.panel.data.providers.ProviderCatalog
+import com.tariffia.panel.data.providers.ProviderDisplayNames
 import com.tariffia.panel.data.providers.ProviderKeyRules
 import com.tariffia.panel.data.providers.ProviderStatus
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
@@ -68,7 +68,7 @@ class ProviderDetailsViewModel(
     private val _uiState = MutableStateFlow(
         ProviderDetailsUiState(
             providerId = providerId,
-            displayName = ProviderCatalog.displayNameFor(providerId),
+            displayName = ProviderDisplayNames.nameFor(providerId),
         ),
     )
     val uiState: StateFlow<ProviderDetailsUiState> = _uiState.asStateFlow()

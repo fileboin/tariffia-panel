@@ -1,67 +1,110 @@
 package com.tariffia.panel.data.providers
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** JVM tests for mapping router `/healthz` output onto provider rows. */
+/** JVM tests for deriving provider rows from Router-reported facts (no hard-coded list). */
 class ProviderStatusResolverTest {
 
-    private fun byName(configured: List<String>, warned: Map<String, String>) =
-        ProviderStatusResolver.resolve(configured, warned).associateBy { it.displayName }
-
-    @Test
-    fun configuredId_isConfigured() {
-        val rows = byName(listOf("openai"), emptyMap())
-        assertEquals(ProviderStatus.CONFIGURED, rows.getValue("OpenAI").status)
+    private fun facts(
+        vararg entries: Pair<String, Boolean>,
+        keyless: Set<String> = emptySet(),
+        models: Int = 3,
+    ): List<ProviderFacts> = entries.map { (id, configured) ->
+        ProviderFacts(
+            id = id,
+            configured = configured,
+            keyless = id in keyless,
+            modelCount = models,
+            summary = "summary-$id",
+            freeTierNote = null,
+        )
     }
 
     @Test
-    fun warnedId_isNotConfiguredWithReason() {
-        val rows = byName(emptyList(), mapOf("together" to "missing env TOGETHER_API_KEY"))
-        val row = rows.getValue("Together")
+    fun derivesRowsFromRouterIdsOnly() {
+        val rows = ProviderStatusResolver.resolve(
+            facts = facts("openai" to true, "openrouter" to false),
+        )
+        assertEquals(listOf("openai", "openrouter"), rows.map { it.id })
+    }
+
+    @Test
+    fun emptyFactsProduceNoRows() {
+        assertTrue(ProviderStatusResolver.resolve(facts = emptyList()).isEmpty())
+    }
+
+    @Test
+    fun orderingIsStableById() {
+        val rows = ProviderStatusResolver.resolve(
+            facts = facts("openrouter" to true, "deepinfra" to true, "ollama" to false),
+        )
+        assertEquals(listOf("deepinfra", "ollama", "openrouter"), rows.map { it.id })
+    }
+
+    @Test
+    fun configuredFactIsConfigured() {
+        val rows = ProviderStatusResolver.resolve(facts = facts("openai" to true))
+        assertEquals(ProviderStatus.CONFIGURED, rows.single().status)
+    }
+
+    @Test
+    fun keylessFactIsUsableAndFlagged() {
+        val rows = ProviderStatusResolver.resolve(facts = facts("ollama" to false, keyless = setOf("ollama")))
+        assertEquals(ProviderStatus.CONFIGURED, rows.single().status)
+        assertTrue(rows.single().keyless)
+    }
+
+    @Test
+    fun unconfiguredWarnedFactIsNotConfiguredWithReason() {
+        val rows = ProviderStatusResolver.resolve(
+            facts = facts("openai" to false),
+            warnedReasons = mapOf("openai" to "missing env OPENAI_API_KEY"),
+        )
+        assertEquals(ProviderStatus.NOT_CONFIGURED, rows.single().status)
+        assertEquals("missing env OPENAI_API_KEY", rows.single().note)
+    }
+
+    @Test
+    fun localKeyStatusIsSeparateFromRouterStatus() {
+        val rows = ProviderStatusResolver.resolve(
+            facts = facts("openai" to false),
+            hasLocalKey = { it == "openai" },
+        )
+        val row = rows.single()
+        // A locally stored key does not change the Router status.
         assertEquals(ProviderStatus.NOT_CONFIGURED, row.status)
-        assertEquals("missing env TOGETHER_API_KEY", row.note)
+        assertTrue(row.hasLocalKey)
     }
 
     @Test
-    fun unmentionedId_isUnknown() {
-        val rows = byName(emptyList(), emptyMap())
-        assertEquals(ProviderStatus.UNKNOWN, rows.getValue("Gemini").status)
-        assertEquals(ProviderStatus.UNKNOWN, rows.getValue("Ollama").status)
+    fun displayNameFallsBackToIdForUnknown() {
+        val rows = ProviderStatusResolver.resolve(facts = facts("mystery-provider" to true))
+        assertEquals("mystery-provider", rows.single().displayName)
     }
 
     @Test
-    fun aliases_matchKnownProvider() {
-        val rows = byName(listOf("z-ai"), emptyMap())
-        assertEquals(ProviderStatus.CONFIGURED, rows.getValue("Z.ai").status)
+    fun statusForMatchesConfiguredWarnedUnknown() {
+        val configured = ProviderStatusResolver.statusFor("openai", listOf("openai"), emptyMap())
+        assertEquals(ProviderStatus.CONFIGURED, configured.first)
+
+        val warned = ProviderStatusResolver.statusFor("openai", emptyList(), mapOf("openai" to "missing"))
+        assertEquals(ProviderStatus.NOT_CONFIGURED, warned.first)
+        assertEquals("missing", warned.second)
+
+        val unknown = ProviderStatusResolver.statusFor("openai", listOf("ollama"), emptyMap())
+        assertEquals(ProviderStatus.UNKNOWN, unknown.first)
     }
 
     @Test
-    fun matchingIsCaseInsensitive() {
-        val rows = byName(listOf("Ollama"), emptyMap())
-        assertEquals(ProviderStatus.CONFIGURED, rows.getValue("Ollama").status)
-    }
-
-    @Test
-    fun unknownReportedId_isAppendedNotHidden() {
-        val rows = ProviderStatusResolver.resolve(listOf("mystery-provider"), emptyMap())
-        val extra = rows.first { it.id == "mystery-provider" }
-        assertEquals(ProviderStatus.CONFIGURED, extra.status)
-        assertEquals("mystery-provider", extra.displayName)
-    }
-
-    @Test
-    fun unknown_returnsWholeCatalogAsUnknown() {
-        val rows = ProviderStatusResolver.unknown()
-        assertEquals(ProviderCatalog.known.size, rows.size)
-        assertTrue(rows.all { it.status == ProviderStatus.UNKNOWN })
-    }
-
-    @Test
-    fun catalogIdsAreNotDuplicatedAsExtras() {
-        val rows = ProviderStatusResolver.resolve(listOf("openai", "ollama"), emptyMap())
-        assertEquals(rows.size, rows.map { it.displayName }.distinct().size)
-        assertEquals(ProviderCatalog.known.size, rows.size)
+    fun noKeyValueAppearsInRows() {
+        val secret = "sk-super-secret-value"
+        val rows = ProviderStatusResolver.resolve(
+            facts = facts("openai" to true),
+            hasLocalKey = { true },
+        )
+        assertFalse(rows.toString().contains(secret))
     }
 }
