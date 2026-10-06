@@ -229,6 +229,49 @@ class RouterClientTest {
         assertTrue(client.fetchProviders(url, "t") is RouterResult.ConnectionFailed)
     }
 
+    @Test
+    fun fetchModelCatalog_success_returnsMetadataAndAuth() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200).setBody(
+                """{"data":[{"id":"openai/gpt-4o-mini","owned_by":"openai",
+                     "mesh":{"kind":"model","capabilities":["text"],"context_window":128000,
+                             "price_per_mtok_blended":0.2625,"max_privacy":"public"}}]}""",
+            ),
+        )
+        when (val result = client.fetchModelCatalog(baseUrl(), "token")) {
+            is RouterResult.Success -> {
+                val model = result.value.single()
+                assertEquals("openai/gpt-4o-mini", model.id)
+                assertEquals("openai", model.ownedBy)
+                assertEquals("model", model.mesh.kind)
+                assertEquals(128000, model.mesh.contextWindow)
+            }
+            else -> fail("Expected Success but was $result")
+        }
+        val recorded = server.takeRequest()
+        assertEquals("/v1/models", recorded.path)
+        assertEquals("Bearer token", recorded.getHeader("Authorization"))
+    }
+
+    @Test
+    fun fetchModelCatalog_malformedBody_isInvalidResponse() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        assertTrue(client.fetchModelCatalog(baseUrl(), "t") is RouterResult.InvalidResponse)
+    }
+
+    @Test
+    fun fetchModelCatalog_401_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(RouterResult.AuthenticationFailed, client.fetchModelCatalog(baseUrl(), "t"))
+    }
+
+    @Test
+    fun fetchModelCatalog_unreachable_isConnectionFailed() = runBlocking {
+        val url = baseUrl()
+        server.shutdown()
+        assertTrue(client.fetchModelCatalog(url, "t") is RouterResult.ConnectionFailed)
+    }
+
     private companion object {
         // A dummy value, not a real secret.
         const val DUMMY_KEY = "dummy-provider-key-value"

@@ -63,6 +63,20 @@ class RouterClient(
         }
 
     /**
+     * Reads the full model catalog (`GET /v1/models`) including per-model metadata
+     * (capabilities, context window, blended price, max privacy). Read-only; the
+     * response carries no key/secret field. [fetchModels] is unchanged.
+     */
+    suspend fun fetchModelCatalog(baseUrl: String, token: String?): RouterResult<List<RouterModel>> =
+        request(baseUrl, PATH_MODELS, token) { body ->
+            try {
+                RouterResult.Success(parseModelCatalog(body))
+            } catch (e: Exception) {
+                RouterResult.InvalidResponse("Could not parse the models response.")
+            }
+        }
+
+    /**
      * Sends a provider API key to the Router's key-sync route. The key is placed in the
      * request body only; it is never logged and never surfaced in the result.
      */

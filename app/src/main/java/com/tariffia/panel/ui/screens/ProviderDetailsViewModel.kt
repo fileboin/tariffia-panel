@@ -10,7 +10,9 @@ import com.tariffia.panel.data.providers.ProviderKeyRules
 import com.tariffia.panel.data.providers.ProviderStatus
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.RouterClient
+import com.tariffia.panel.data.router.RouterModel
 import com.tariffia.panel.data.router.RouterResult
+import com.tariffia.panel.data.router.modelsForProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -23,6 +25,8 @@ data class ProviderDetailsUiState(
     val providerId: String = "",
     val displayName: String = "",
     val routerStatusView: RouterStatusView = RouterStatusView.Loading,
+    /** Router-reported, read-only model metadata for this provider. */
+    val models: List<RouterModel> = emptyList(),
     val hasStoredKey: Boolean = false,
     val keyInput: String = "",
     val keyVisible: Boolean = false,
@@ -93,13 +97,21 @@ class ProviderDetailsViewModel(
         val token = withContext(Dispatchers.IO) { settings.readToken() }
         val url = settingsSnapshot.routerUrl
         if (url.isBlank() || token.isNullOrBlank()) {
-            _uiState.update { it.copy(routerStatusView = RouterStatusView.RouterNotConfigured) }
+            _uiState.update {
+                it.copy(routerStatusView = RouterStatusView.RouterNotConfigured, models = emptyList())
+            }
             return
         }
         val result = client.fetchHealth(url, token)
         _uiState.update {
             it.copy(routerStatusView = ProviderRouterStatusResolver.fromHealthResult(result, providerId))
         }
+        // Best-effort, read-only model catalog: a failure must not affect status/key.
+        val models = when (val catalog = client.fetchModelCatalog(url, token)) {
+            is RouterResult.Success -> modelsForProvider(catalog.value, providerId)
+            else -> emptyList()
+        }
+        _uiState.update { it.copy(models = models) }
     }
 
     fun onKeyChange(value: String) {

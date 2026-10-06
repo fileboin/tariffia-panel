@@ -25,11 +25,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.tariffia.panel.data.router.RouterModel
 
 /**
  * Provider details: router-reported status (with an explicit unavailable state) is shown
  * separately from the locally stored API key status. The key is entered masked and is
- * never read back.
+ * never read back. The Models section is read-only Router metadata.
  */
 @Composable
 fun ProviderDetailsScreen(
@@ -57,6 +58,17 @@ fun ProviderDetailsScreen(
 
         Text(text = "Router status", style = MaterialTheme.typography.titleMedium)
         RouterStatusContent(state.routerStatusView)
+
+        Text(text = "Models (${state.models.size})", style = MaterialTheme.typography.titleMedium)
+        if (state.models.isEmpty()) {
+            Text(
+                text = "No models reported by the router.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        } else {
+            state.models.forEach { model -> ModelItem(model) }
+        }
 
         Text(text = "API key", style = MaterialTheme.typography.titleMedium)
         Text(
@@ -169,3 +181,43 @@ private fun RouterStatusContent(view: RouterStatusView) {
         }
     }
 }
+
+/** Read-only Router model metadata. Never shows a key, token or header. */
+@Composable
+private fun ModelItem(model: RouterModel) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(text = model.id, style = MaterialTheme.typography.bodyLarge)
+        val meta = buildList {
+            if (model.mesh.capabilities.isNotEmpty()) {
+                add(model.mesh.capabilities.joinToString(", "))
+            }
+            if (model.mesh.contextWindow > 0) {
+                add("${model.mesh.contextWindow} ctx")
+            }
+        }.joinToString(" · ")
+        if (meta.isNotEmpty()) {
+            Text(
+                text = meta,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+        Text(text = "Price: ${blendedPriceLabel(model.mesh.pricePerMTokBlended)}", style = MaterialTheme.typography.bodySmall)
+        model.mesh.maxPrivacy?.let { privacy ->
+            Text(
+                text = "Max privacy: $privacy",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+        }
+    }
+}
+
+/** The Router exposes only a blended price; never invent separate in/out prices. */
+private fun blendedPriceLabel(blended: Double): String =
+    if (blended == 0.0) "Free" else "\$$blended / MTok (blended)"
