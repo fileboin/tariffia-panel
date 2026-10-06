@@ -123,6 +123,13 @@ jobs:
           done
           echo "all expected native libs present"
 
+      - name: Upload release APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tariffia-panel-release
+          path: app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+
       - name: Name APK asset
         run: cp app/build/outputs/apk/release/app-release.apk tariffia-panel-release.apk
 
