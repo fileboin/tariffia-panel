@@ -9,10 +9,11 @@ import com.tariffia.panel.data.providers.ProviderDisplayNames
 import com.tariffia.panel.data.providers.ProviderKeyRules
 import com.tariffia.panel.data.providers.ProviderStatus
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
+import com.tariffia.panel.data.router.ModelWithHealth
 import com.tariffia.panel.data.router.RouterClient
-import com.tariffia.panel.data.router.RouterModel
 import com.tariffia.panel.data.router.RouterResult
 import com.tariffia.panel.data.router.modelsForProvider
+import com.tariffia.panel.data.router.modelsWithHealth
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -25,8 +26,8 @@ data class ProviderDetailsUiState(
     val providerId: String = "",
     val displayName: String = "",
     val routerStatusView: RouterStatusView = RouterStatusView.Loading,
-    /** Router-reported, read-only model metadata for this provider. */
-    val models: List<RouterModel> = emptyList(),
+    /** Router-reported, read-only model metadata for this provider, with reliability. */
+    val models: List<ModelWithHealth> = emptyList(),
     val hasStoredKey: Boolean = false,
     val keyInput: String = "",
     val keyVisible: Boolean = false,
@@ -103,12 +104,18 @@ class ProviderDetailsViewModel(
             return
         }
         val result = client.fetchHealth(url, token)
+        val observedHealth = when (result) {
+            is RouterResult.Success -> result.value.health
+            else -> emptyMap()
+        }
         _uiState.update {
             it.copy(routerStatusView = ProviderRouterStatusResolver.fromHealthResult(result, providerId))
         }
         // Best-effort, read-only model catalog: a failure must not affect status/key.
+        // Reliability comes from the SAME /healthz response above (no extra request).
         val models = when (val catalog = client.fetchModelCatalog(url, token)) {
-            is RouterResult.Success -> modelsForProvider(catalog.value, providerId)
+            is RouterResult.Success ->
+                modelsWithHealth(modelsForProvider(catalog.value, providerId), observedHealth)
             else -> emptyList()
         }
         _uiState.update { it.copy(models = models) }

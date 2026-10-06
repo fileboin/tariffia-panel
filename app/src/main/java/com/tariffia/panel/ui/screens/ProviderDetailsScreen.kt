@@ -25,7 +25,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.tariffia.panel.data.router.RouterModel
+import com.tariffia.panel.data.router.CandidateHealth
+import com.tariffia.panel.data.router.ModelWithHealth
+import kotlin.math.roundToInt
 
 /**
  * Provider details: router-reported status (with an explicit unavailable state) is shown
@@ -67,7 +69,7 @@ fun ProviderDetailsScreen(
                 color = MaterialTheme.colorScheme.outline,
             )
         } else {
-            state.models.forEach { model -> ModelItem(model) }
+            state.models.forEach { item -> ModelItem(item) }
         }
 
         Text(text = "API key", style = MaterialTheme.typography.titleMedium)
@@ -182,9 +184,10 @@ private fun RouterStatusContent(view: RouterStatusView) {
     }
 }
 
-/** Read-only Router model metadata. Never shows a key, token or header. */
+/** Read-only Router model metadata + observed reliability. Never shows a key, token or header. */
 @Composable
-private fun ModelItem(model: RouterModel) {
+private fun ModelItem(item: ModelWithHealth) {
+    val model = item.model
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -215,6 +218,42 @@ private fun ModelItem(model: RouterModel) {
                 color = MaterialTheme.colorScheme.outline,
             )
         }
+        ReliabilityContent(item.health)
+    }
+}
+
+/** Router-observed reliability. A missing entry is "no data", never a fabricated value. */
+@Composable
+private fun ReliabilityContent(health: CandidateHealth?) {
+    if (health == null) {
+        Text(
+            text = "Reliability: No data yet",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
+        return
+    }
+    Text(
+        text = "Reliability: ${if (health.open) "Open (cooling down)" else "Healthy"}",
+        style = MaterialTheme.typography.bodySmall,
+        color = if (health.open) ErrorColor else ConfiguredColor,
+    )
+    val stats = buildList {
+        health.ewmaMs?.let { add("Latency: $it ms") }
+        health.successRate?.let { add("Success: ${(it * 100).roundToInt()}%") }
+        add("Attempts: ${health.attempts}")
+    }.joinToString(" · ")
+    Text(
+        text = stats,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.outline,
+    )
+    if (health.open && health.openForMs > 0) {
+        Text(
+            text = "Cooldown: ${health.openForMs / 1000} s",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
     }
 }
 

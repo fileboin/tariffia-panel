@@ -166,4 +166,37 @@ class RouterModelsTest {
         assertEquals(listOf("openai/gpt-4o-mini", "openai/gpt-4o"), ids)
         assertTrue(modelsForProvider(parseModelCatalog(catalog), "missing").isEmpty())
     }
+
+    /* ----------------------------- modelsWithHealth ----------------------------- */
+
+    @Test
+    fun modelsWithHealthMapsByCandidateKey() {
+        val models = modelsForProvider(parseModelCatalog(catalog), "openai")
+        val health = mapOf(
+            "openai/gpt-4o-mini" to
+                CandidateHealth(open = false, openForMs = 0, ewmaMs = 420, attempts = 7, successRate = 0.857),
+        )
+        val paired = modelsWithHealth(models, health)
+        assertEquals(listOf("openai/gpt-4o-mini", "openai/gpt-4o"), paired.map { it.model.id })
+        assertEquals(420L, paired[0].health?.ewmaMs)
+        // Not observed by the Router -> no data, never a fabricated default.
+        assertNull(paired[1].health)
+    }
+
+    @Test
+    fun modelsWithHealthEmptyHealthYieldsAllNull() {
+        val paired = modelsWithHealth(parseModelCatalog(catalog), emptyMap())
+        assertTrue(paired.isNotEmpty())
+        assertTrue(paired.all { it.health == null })
+    }
+
+    @Test
+    fun modelsWithHealthNeverCarriesSecrets() {
+        val secret = "sk-super-secret-value"
+        val paired = modelsWithHealth(
+            parseModelCatalog(catalog),
+            mapOf("openai/gpt-4o-mini" to CandidateHealth(false, 0, 1, 1, 1.0)),
+        )
+        assertFalse(paired.toString().contains(secret))
+    }
 }

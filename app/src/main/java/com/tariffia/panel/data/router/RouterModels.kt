@@ -75,3 +75,16 @@ internal fun modelsForProvider(models: List<RouterModel>, providerId: String): L
     val id = providerId.trim().lowercase()
     return models.filter { it.mesh.kind == "model" && it.ownedBy.trim().lowercase() == id }
 }
+
+/** A Router model paired with its observed reliability, when the Router has any. */
+data class ModelWithHealth(val model: RouterModel, val health: CandidateHealth?)
+
+/**
+ * Pairs each model with its `/healthz` reliability entry. The Router uses the candidate
+ * key (`provider/model`) as the health key, which is exactly [RouterModel.id]; a model the
+ * Router has never observed gets a null health ("no data yet"), never a fabricated default.
+ */
+internal fun modelsWithHealth(
+    models: List<RouterModel>,
+    health: Map<String, CandidateHealth>,
+): List<ModelWithHealth> = models.map { ModelWithHealth(it, health[it.id]) }
