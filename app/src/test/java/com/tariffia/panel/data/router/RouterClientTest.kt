@@ -317,6 +317,65 @@ class RouterClientTest {
         assertTrue(client.fetchUsage(url, "t") is RouterResult.ConnectionFailed)
     }
 
+    @Test
+    fun sendChat_success_postsModelMessagesAndAuth() = runBlocking {
+        server.enqueue(
+            MockResponse().setResponseCode(200)
+                .setBody("""{"choices":[{"message":{"role":"assistant","content":"hi there"}}]}"""),
+        )
+        val result = client.sendChat(baseUrl(), "token", "mesh/free", listOf(ChatMessage("user", "hello")))
+        when (result) {
+            is RouterResult.Success -> assertEquals("hi there", result.value)
+            else -> fail("Expected Success but was $result")
+        }
+        val recorded = server.takeRequest()
+        assertEquals("POST", recorded.method)
+        assertEquals("/v1/chat/completions", recorded.path)
+        assertEquals("Bearer token", recorded.getHeader("Authorization"))
+        val body = recorded.body.readUtf8()
+        assertTrue(body.contains("\"model\":\"mesh/free\""))
+        assertTrue(body.contains("\"role\":\"user\""))
+        assertTrue(body.contains("\"content\":\"hello\""))
+        assertTrue(body.contains("\"stream\":false"))
+    }
+
+    @Test
+    fun sendChat_401_isAuthenticationFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(401))
+        assertEquals(
+            RouterResult.AuthenticationFailed,
+            client.sendChat(baseUrl(), "t", "mesh/free", listOf(ChatMessage("user", "hi"))),
+        )
+    }
+
+    @Test
+    fun sendChat_500_isHttpError() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(500))
+        assertEquals(
+            RouterResult.HttpError(500),
+            client.sendChat(baseUrl(), "t", "mesh/free", listOf(ChatMessage("user", "hi"))),
+        )
+    }
+
+    @Test
+    fun sendChat_malformedBody_isInvalidResponse() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        assertTrue(client.sendChat(baseUrl(), "t", "mesh/free", listOf(ChatMessage("user", "hi"))) is RouterResult.InvalidResponse)
+    }
+
+    @Test
+    fun sendChat_noAssistantContent_isInvalidResponse() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"choices":[]}"""))
+        assertTrue(client.sendChat(baseUrl(), "t", "mesh/free", listOf(ChatMessage("user", "hi"))) is RouterResult.InvalidResponse)
+    }
+
+    @Test
+    fun sendChat_unreachable_isConnectionFailed() = runBlocking {
+        val url = baseUrl()
+        server.shutdown()
+        assertTrue(client.sendChat(url, "t", "mesh/free", listOf(ChatMessage("user", "hi"))) is RouterResult.ConnectionFailed)
+    }
+
     private companion object {
         // A dummy value, not a real secret.
         const val DUMMY_KEY = "dummy-provider-key-value"

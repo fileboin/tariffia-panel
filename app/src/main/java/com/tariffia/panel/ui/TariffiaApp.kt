@@ -16,6 +16,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.tariffia.panel.ui.screens.ChatScreen
 import com.tariffia.panel.ui.screens.HomeScreen
 import com.tariffia.panel.ui.screens.ProviderDetailsScreen
 import com.tariffia.panel.ui.screens.ProvidersScreen
@@ -26,9 +27,10 @@ private const val PROVIDER_DETAILS_ROUTE = "provider/{providerId}"
 
 private fun providerDetailsRoute(providerId: String): String = "provider/${Uri.encode(providerId)}"
 
-/** The four MVP destinations. */
+/** The top-level destinations. */
 enum class Destination(val route: String, val label: String) {
     Home("home", "Home"),
+    Chat("chat", "Chat"),
     Vps("vps", "VPS / SSH"),
     Providers("providers", "Providers"),
     Settings("settings", "Settings"),
@@ -68,6 +70,15 @@ fun TariffiaApp() {
         ) {
             composable(Destination.Home.route) {
                 HomeScreen(
+                    onOpenSettings = {
+                        navController.navigate(Destination.Settings.route) {
+                            launchSingleTop = true
+                        }
+                    },
+                )
+            }
+            composable(Destination.Chat.route) {
+                ChatScreen(
                     onOpenSettings = {
                         navController.navigate(Destination.Settings.route) {
                             launchSingleTop = true

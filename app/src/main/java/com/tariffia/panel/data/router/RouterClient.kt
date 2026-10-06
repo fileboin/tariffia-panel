@@ -102,7 +102,33 @@ class RouterClient(
     ): RouterResult<Unit> {
         val path = "/v1/providers/${URLEncoder.encode(providerId, "UTF-8")}/key"
         val jsonBody = buildJsonObject { put("key", key) }.toString()
-        return requestWithBody(baseUrl, path, token, jsonBody) { RouterResult.Success(Unit) }
+        return write(baseUrl, "PUT", path, token, jsonBody) { RouterResult.Success(Unit) }
+    }
+
+    /**
+     * Sends a non-streaming chat request to `POST /v1/chat/completions` and returns the
+     * assistant's text reply. Reuses the existing authenticated request path and error
+     * mapping; the token is never logged and no token/cost is computed here.
+     */
+    suspend fun sendChat(
+        baseUrl: String,
+        token: String?,
+        model: String,
+        messages: List<ChatMessage>,
+    ): RouterResult<String> {
+        val jsonBody = encodeChatRequest(model, messages)
+        return write(baseUrl, "POST", PATH_CHAT, token, jsonBody) { body ->
+            try {
+                val text = parseChatResponse(body).assistantText()
+                if (text == null) {
+                    RouterResult.InvalidResponse("The router returned no assistant content.")
+                } else {
+                    RouterResult.Success(text)
+                }
+            } catch (e: Exception) {
+                RouterResult.InvalidResponse("Could not parse the chat response.")
+            }
+        }
     }
 
     private suspend fun <T> request(
@@ -133,8 +159,9 @@ class RouterClient(
         }
     }
 
-    private suspend fun <T> requestWithBody(
+    private suspend fun <T> write(
         baseUrl: String,
+        method: String,
         path: String,
         token: String?,
         jsonBody: String,
@@ -143,7 +170,7 @@ class RouterClient(
         try {
             val requestBuilder = Request.Builder()
                 .url(baseUrl.trimEnd('/') + path)
-                .put(jsonBody.toRequestBody(JSON_MEDIA_TYPE))
+                .method(method, jsonBody.toRequestBody(JSON_MEDIA_TYPE))
                 .header("Accept", "application/json")
             if (!token.isNullOrBlank()) {
                 requestBuilder.header("Authorization", "Bearer $token")
@@ -167,6 +194,7 @@ class RouterClient(
         const val PATH_MODELS = "/v1/models"
         const val PATH_PROVIDERS = "/v1/providers"
         const val PATH_USAGE = "/v1/usage"
+        const val PATH_CHAT = "/v1/chat/completions"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }
