@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.router.RouterClient
 import com.tariffia.panel.data.router.RouterResult
+import com.tariffia.panel.data.update.AvailableUpdate
+import com.tariffia.panel.data.update.UpdateChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -42,6 +44,12 @@ data class HomeUiState(
     val providerSummary: HomeProviderSummary? = null,
 )
 
+/** Best-effort update availability. Failure is silent (stays [None]). */
+sealed interface UpdateState {
+    data object None : UpdateState
+    data class Available(val version: String, val url: String) : UpdateState
+}
+
 /**
  * Drives the Home/Status dashboard: reads the router URL and token from secure
  * storage, checks `/healthz` (status + provider summary), then lists `/v1/models`.
@@ -52,13 +60,37 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val store = SecureSettingsStore(application)
     private val client = RouterClient()
+    private val updateChecker = UpdateChecker()
     private var refreshJob: Job? = null
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
 
+    private val _updateState = MutableStateFlow<UpdateState>(UpdateState.None)
+    val updateState: StateFlow<UpdateState> = _updateState.asStateFlow()
+
     init {
         refresh()
+        checkForUpdateOnce()
+    }
+
+    /**
+     * One-shot, best-effort update check (once per app process). It never affects the
+     * Router/status flow: any failure simply leaves [UpdateState.None].
+     */
+    private fun checkForUpdateOnce() {
+        if (updateCheckedThisProcess) return
+        updateCheckedThisProcess = true
+        viewModelScope.launch {
+            val app = getApplication<Application>()
+            val version = runCatching {
+                app.packageManager.getPackageInfo(app.packageName, 0).versionName
+            }.getOrNull().orEmpty()
+            val update: AvailableUpdate? = updateChecker.check(version)
+            if (update != null) {
+                _updateState.value = UpdateState.Available(update.version, update.url)
+            }
+        }
     }
 
     fun refresh() {
@@ -111,5 +143,11 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(status = status, models = emptyList(), modelsError = null, providerSummary = null)
         }
+    }
+
+    private companion object {
+        /** Guarantees at most one update check per app process. */
+        @Volatile
+        var updateCheckedThisProcess = false
     }
 }

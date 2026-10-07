@@ -1,7 +1,9 @@
 package com.tariffia.panel.ui.screens
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -47,6 +49,7 @@ fun HomeScreen(
     routerRuntimeViewModel: RouterRuntimeViewModel = viewModel(),
 ) {
     val state by viewModel.uiState.collectAsState()
+    val updateState by viewModel.updateState.collectAsState()
     val runtimeStatus by routerRuntimeViewModel.state.collectAsState()
     val syncSummary by routerRuntimeViewModel.syncSummary.collectAsState()
     val context = LocalContext.current
@@ -68,6 +71,17 @@ fun HomeScreen(
                 text = "Status dashboard",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
+            )
+        }
+
+        (updateState as? UpdateState.Available)?.let { update ->
+            UpdateBanner(
+                version = update.version,
+                onView = {
+                    runCatching {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.url)))
+                    }
+                },
             )
         }
 
@@ -239,6 +253,29 @@ private fun statusColor(status: HomeStatus): Color = when (status) {
     HomeStatus.Online -> OnlineColor
     HomeStatus.Checking, HomeStatus.NotConfigured -> MaterialTheme.colorScheme.outline
     else -> ErrorColor
+}
+
+/** Compact, unobtrusive "update available" banner. Read-only; opens the browser. */
+@Composable
+private fun UpdateBanner(version: String, onView: () -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Text(text = "Update available", style = MaterialTheme.typography.titleMedium)
+            Text(
+                text = "A new version of Tariffia Panel is available.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+            Text(
+                text = "Version $version",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            Button(onClick = onView) { Text("View update") }
+        }
+    }
 }
 
 /** Controls the embedded Router runtime via its foreground service. */
