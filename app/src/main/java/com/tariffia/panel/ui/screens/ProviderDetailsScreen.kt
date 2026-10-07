@@ -126,14 +126,16 @@ fun ProviderDetailsScreen(
             ) {
                 Text("Clear API key")
             }
+        }
 
-            OutlinedButton(
-                onClick = viewModel::syncKeyToRouter,
-                enabled = actionsEnabled && state.hasStoredKey,
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Sync to Router")
-            }
+        // Sync is offered for keyless providers too: keyless means "no key required", not
+        // "do not sync". The value, if any, is read in memory only.
+        OutlinedButton(
+            onClick = viewModel::syncKeyToRouter,
+            enabled = actionsEnabled && (state.hasStoredKey || state.keyless),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Sync to Router")
         }
 
         state.statusMessage?.let { message ->

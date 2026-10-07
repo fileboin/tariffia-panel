@@ -43,9 +43,11 @@ data class ProviderDetailsUiState(
     val showClearConfirmation: Boolean = false,
 )
 
-/** Outcome of pushing the stored key to the Router. Never carries the key. */
-private sealed interface SyncResult {
+/** Outcome of pushing a provider to the Router. Never carries a key. */
+internal sealed interface SyncResult {
     data object Success : SyncResult
+    /** Keyless provider: synced with no key (no key value required or invented). */
+    data object SyncedKeyless : SyncResult
     data object NoLocalKey : SyncResult
     data object RouterNotConfigured : SyncResult
     data object AuthRejected : SyncResult
@@ -217,7 +219,7 @@ class ProviderDetailsViewModel(
             try {
                 val result = pushStoredKeyToRouter()
                 _uiState.update { it.copy(statusMessage = syncMessage(result)) }
-                if (result is SyncResult.Success) refreshRouterStatus()
+                if (result is SyncResult.Success || result is SyncResult.SyncedKeyless) refreshRouterStatus()
             } finally {
                 _uiState.update { it.copy(isBusy = false) }
             }
@@ -225,31 +227,42 @@ class ProviderDetailsViewModel(
     }
 
     /**
-     * Reads the stored key (in memory only) and PUTs it to the Router. The value is
-     * never logged and never returned.
+     * Pushes this provider to the Router via the normal key-sync route. Keyless providers are
+     * synced too — with no key value (nothing is required or invented). The key is read in
+     * memory only and is never logged or returned.
      */
     private suspend fun pushStoredKeyToRouter(): SyncResult {
-        // Keyless providers take no credential: never reach the transport, and never send an
-        // empty or placeholder key. There is simply nothing to sync.
-        if (!ProviderDetailsRules.shouldPushKey(_uiState.value.keyless)) return SyncResult.NoLocalKey
-        val key = withContext(Dispatchers.IO) { keyStore.readKey(providerId) }
-            ?: return SyncResult.NoLocalKey
+        val state = _uiState.value
+        val plan = ProviderDetailsRules.syncPlan(state.keyless, state.hasStoredKey)
+        if (plan == SyncPlan.NOTHING) return SyncResult.NoLocalKey
         val snapshot = withContext(Dispatchers.IO) { settings.load() }
         val token = withContext(Dispatchers.IO) { settings.readToken() }
         val url = snapshot.routerUrl
         if (url.isBlank() || token.isNullOrBlank()) return SyncResult.RouterNotConfigured
-        return when (val result = client.syncProviderKey(url, token, providerId, key)) {
-            is RouterResult.Success -> SyncResult.Success
-            RouterResult.AuthenticationFailed -> SyncResult.AuthRejected
-            is RouterResult.HttpError ->
-                if (result.code == 404) SyncResult.ProviderNotAllowed else SyncResult.Failed("Router error (HTTP ${result.code}).")
-            is RouterResult.InvalidResponse -> SyncResult.Failed("Router rejected the request.")
-            is RouterResult.ConnectionFailed -> SyncResult.Unreachable
+        return runProviderSync(
+            plan = plan,
+            readKey = { withContext(Dispatchers.IO) { keyStore.readKey(providerId) } },
+            putKey = { key -> mapSyncResult(client.syncProviderKey(url, token, providerId, key), state.keyless) },
+        )
+    }
+
+    private fun mapSyncResult(result: RouterResult<Unit>, keyless: Boolean): SyncResult = when (result) {
+        is RouterResult.Success -> if (keyless) SyncResult.SyncedKeyless else SyncResult.Success
+        RouterResult.AuthenticationFailed -> SyncResult.AuthRejected
+        is RouterResult.HttpError -> when {
+            result.code == 404 -> SyncResult.ProviderNotAllowed
+            // A keyless provider needs no credential, so the Router's "key required" reply is
+            // not a failure: there is simply no key to push.
+            result.code == 400 && keyless -> SyncResult.SyncedKeyless
+            else -> SyncResult.Failed("Router error (HTTP ${result.code}).")
         }
+        is RouterResult.InvalidResponse -> SyncResult.Failed("Router rejected the request.")
+        is RouterResult.ConnectionFailed -> SyncResult.Unreachable
     }
 
     private fun syncMessage(result: SyncResult): String = when (result) {
         SyncResult.Success -> "Key synced to router."
+        SyncResult.SyncedKeyless -> "Keyless provider — no API key required; the Router manages it."
         SyncResult.NoLocalKey -> "No local key to sync."
         SyncResult.RouterNotConfigured -> "Router not configured (URL/token)."
         SyncResult.AuthRejected -> "Router rejected the credentials (auth or bind)."
@@ -278,9 +291,12 @@ class ProviderDetailsViewModel(
     }
 }
 
+/** How a provider's sync should proceed. */
+internal enum class SyncPlan { SYNC_WITH_KEY, SYNC_KEYLESS, NOTHING }
+
 /**
  * Pure decisions for Provider Details, kept free of Android APIs so they are JVM-testable.
- * A keyless provider (e.g. a local Ollama) takes no credential, so no key is ever pushed.
+ * A keyless provider (e.g. a local Ollama) takes no credential but is still synced.
  */
 internal object ProviderDetailsRules {
 
@@ -291,8 +307,29 @@ internal object ProviderDetailsRules {
     }
 
     /**
-     * Whether a key PUT to the Router should be attempted. Keyless providers must never
-     * reach the transport (no empty and no placeholder key is ever sent).
+     * How to sync this provider. Keyless providers ARE synced (with no key value); a stored
+     * key is synced as today; otherwise there is nothing to push.
      */
-    fun shouldPushKey(keyless: Boolean): Boolean = !keyless
+    fun syncPlan(keyless: Boolean, hasStoredKey: Boolean): SyncPlan = when {
+        keyless -> SyncPlan.SYNC_KEYLESS
+        hasStoredKey -> SyncPlan.SYNC_WITH_KEY
+        else -> SyncPlan.NOTHING
+    }
+}
+
+/**
+ * Testable core of the per-provider sync: decides whether a key is sent and performs the PUT
+ * through the injected [putKey]. Keyless providers still reach the transport — with no key.
+ */
+internal suspend fun runProviderSync(
+    plan: SyncPlan,
+    readKey: suspend () -> String?,
+    putKey: suspend (key: String) -> SyncResult,
+): SyncResult = when (plan) {
+    SyncPlan.NOTHING -> SyncResult.NoLocalKey
+    SyncPlan.SYNC_WITH_KEY -> {
+        val key = readKey()
+        if (key.isNullOrBlank()) SyncResult.NoLocalKey else putKey(key)
+    }
+    SyncPlan.SYNC_KEYLESS -> putKey("")
 }
