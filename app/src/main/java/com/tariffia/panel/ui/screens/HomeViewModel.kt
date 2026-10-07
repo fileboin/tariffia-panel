@@ -8,6 +8,7 @@ import com.tariffia.panel.data.router.RouterClient
 import com.tariffia.panel.data.router.RouterResult
 import com.tariffia.panel.data.update.AvailableUpdate
 import com.tariffia.panel.data.update.UpdateChecker
+import com.tariffia.panel.data.update.installedVersion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -83,9 +84,7 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         updateCheckedThisProcess = true
         viewModelScope.launch {
             val app = getApplication<Application>()
-            val version = runCatching {
-                app.packageManager.getPackageInfo(app.packageName, 0).versionName
-            }.getOrNull().orEmpty()
+            val version = installedVersion(app)
             val update: AvailableUpdate? = updateChecker.check(version)
             if (update != null) {
                 _updateState.value = UpdateState.Available(update.version, update.url)

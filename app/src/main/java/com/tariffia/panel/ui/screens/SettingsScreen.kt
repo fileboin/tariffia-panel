@@ -1,5 +1,7 @@
 package com.tariffia.panel.ui.screens
 
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -20,6 +22,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -36,6 +39,7 @@ import com.tariffia.panel.data.SettingsRules
 fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
     val state by viewModel.uiState.collectAsState()
     val fieldsEnabled = !state.isLoading && !state.isSaving
+    val context = LocalContext.current
 
     Column(
         modifier = Modifier
@@ -114,6 +118,51 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                 text = message,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.primary,
+            )
+        }
+
+        Text(text = "App", style = MaterialTheme.typography.titleMedium)
+        Text(text = "Version ${state.appVersion}", style = MaterialTheme.typography.bodyLarge)
+        OutlinedButton(
+            onClick = viewModel::checkForUpdates,
+            enabled = state.updateCheck != UpdateCheckState.Checking,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("Check for updates")
+        }
+        when (val check = state.updateCheck) {
+            UpdateCheckState.Idle -> Unit
+            UpdateCheckState.Checking -> Text(
+                text = "Checking…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            UpdateCheckState.UpToDate -> Text(
+                text = "You are up to date.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
+            is UpdateCheckState.Available -> {
+                Text(
+                    text = "Update available (Version ${check.version}).",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Button(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(check.url)))
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("View update")
+                }
+            }
+            UpdateCheckState.Unable -> Text(
+                text = "Unable to check for updates.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
             )
         }
     }

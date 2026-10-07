@@ -130,4 +130,58 @@ class UpdateCheckerTest {
         server.shutdown()
         assertNull(c.check("0.0.2"))
     }
+
+    /* ------------------------------- older version ------------------------------ */
+
+    @Test
+    fun olderRelease_isNoUpdate() {
+        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.2"
+        assertNull(evaluateUpdate("0.0.3", "v0.0.2", url))
+        assertEquals(UpdateResult.UpToDate, evaluateResult("0.0.3", "v0.0.2", url))
+    }
+
+    @Test
+    fun evaluateResult_states() {
+        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"
+        assertEquals(UpdateResult.Available("0.0.3", url), evaluateResult("0.0.2", "v0.0.3", url))
+        assertEquals(UpdateResult.UpToDate, evaluateResult("0.0.2", "v0.0.2", url))
+        assertEquals(UpdateResult.Failed, evaluateResult("0.0.2", "garbage", url))
+        assertEquals(UpdateResult.Failed, evaluateResult("0.0.2", "v0.0.3", ""))
+        assertEquals(UpdateResult.Failed, evaluateResult("", "v0.0.3", url))
+    }
+
+    /* ------------------------------- detailed check ------------------------------ */
+
+    @Test
+    fun checkDetailed_newer_isAvailable() = runBlocking {
+        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.3","html_url":"$url"}"""))
+        assertEquals(UpdateResult.Available("0.0.3", url), checker().checkDetailed("0.0.2"))
+    }
+
+    @Test
+    fun checkDetailed_current_isUpToDate() = runBlocking {
+        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.2"
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.2","html_url":"$url"}"""))
+        assertEquals(UpdateResult.UpToDate, checker().checkDetailed("0.0.2"))
+    }
+
+    @Test
+    fun checkDetailed_httpError_isFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(404))
+        assertEquals(UpdateResult.Failed, checker().checkDetailed("0.0.2"))
+    }
+
+    @Test
+    fun checkDetailed_malformed_isFailed() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
+        assertEquals(UpdateResult.Failed, checker().checkDetailed("0.0.2"))
+    }
+
+    @Test
+    fun checkDetailed_unreachable_isFailed() = runBlocking {
+        val c = checker()
+        server.shutdown()
+        assertEquals(UpdateResult.Failed, c.checkDetailed("0.0.2"))
+    }
 }
