@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.tariffia.panel.data.ssh.SshTunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,11 +47,20 @@ class RouterService : Service() {
         startForegroundNow()
         // Idempotent: never start a second Node/Router instance.
         if (RouterStartGuard.shouldStart(RouterRuntime.state.value)) {
-            scope.launch { RouterRuntime.bringUp(applicationContext) }
+            scope.launch {
+                // Establish the SSH local forward (127.0.0.1:11434 -> VPS 127.0.0.1:11434)
+                // BEFORE the Router is expected to serve, so its existing Ollama baseUrl is
+                // reachable. Best-effort: a tunnel failure is recorded in SshTunnel.lastError()
+                // and must not prevent the Router from starting.
+                SshTunnel.start(applicationContext)
+                RouterRuntime.bringUp(applicationContext)
+            }
         }
     }
 
     private fun handleStop() {
+        // Close the SSH forward with the Router it serves.
+        SshTunnel.stop()
         RouterRuntime.markStopped()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()
