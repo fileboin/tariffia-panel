@@ -105,7 +105,9 @@ object RouterRuntime {
     /** Extracts the unmodified Router bundle (dist/ + registry/) on first use. */
     private fun ensureRuntime(ctx: Context): File {
         val root = routerDir(ctx)
-        val marker = File(root, "dist/src/cli/index.js")
+        // Marker is a file that only exists in the current bundled Router (PR-D adds
+        // usage.js), so an existing install re-extracts the new dist exactly once.
+        val marker = File(root, "dist/src/core/usage.js")
         if (!marker.exists()) {
             root.mkdirs()
             ctx.assets.open(DIST_ZIP_ASSET).use { input ->
