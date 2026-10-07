@@ -75,6 +75,24 @@ class SshOutcomeMapperTest {
     }
 
     @Test
+    fun rejectHostKey_mapsToConfirmationRequired() {
+        // JSch emits this exact message for an unpinned host with StrictHostKeyChecking=yes,
+        // which is what JschSshConnector uses.
+        assertEquals(
+            SshConnectOutcome.HostKeyUnknown(identity),
+            SshOutcomeMapper.fromFailure("reject HostKey: 1.2.3.4", pinned = null, presented = identity),
+        )
+    }
+
+    @Test
+    fun rejectHostKey_withoutPresentedIdentity_isConnectionFailed() {
+        assertEquals(
+            SshConnectOutcome.Failed("Connection failed."),
+            SshOutcomeMapper.fromFailure("reject HostKey: 1.2.3.4", pinned = null, presented = null),
+        )
+    }
+
+    @Test
     fun changedHostKey_mapsToHostKeyChanged() {
         assertEquals(
             SshConnectOutcome.HostKeyChanged(pin, identity),
