@@ -17,10 +17,16 @@ val releaseKeystorePassword = signingValue("RELEASE_KEYSTORE_PASSWORD")
 val releaseKeyAlias = signingValue("RELEASE_KEY_ALIAS")
 val releaseKeyPassword = signingValue("RELEASE_KEY_PASSWORD")
 val hasReleaseSigning = releaseKeystorePath != null &&
-    file(releaseKeystorePath).exists() &&
+    file(releaseKeystorePath).let { it.exists() && it.length() > 0L } &&
     releaseKeystorePassword != null &&
     releaseKeyAlias != null &&
     releaseKeyPassword != null
+
+// Explicit, opt-in local-development fallback. It is OFF by default so a production
+// release build can never be silently debug-signed; a local dev must ask for it.
+val allowDebugReleaseSigning =
+    (System.getenv("ALLOW_DEBUG_RELEASE_SIGNING") ?: "").equals("true", ignoreCase = true) ||
+        (project.findProperty("ALLOW_DEBUG_RELEASE_SIGNING") as String?)?.equals("true", ignoreCase = true) == true
 
 android {
     namespace = "com.tariffia.panel"
@@ -76,13 +82,13 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Use the stable CI-provided keystore when available; otherwise fall back to
-            // the debug key so a local release build still works. A user-facing release
-            // must be produced by CI with the stable keystore configured.
-            signingConfig = if (hasReleaseSigning) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Stable CI keystore when configured; an explicit, opt-in debug fallback for
+            // local development only; otherwise left unsigned — and a release build is
+            // failed clearly below rather than silently producing a mis-signed artifact.
+            signingConfig = when {
+                hasReleaseSigning -> signingConfigs.getByName("release")
+                allowDebugReleaseSigning -> signingConfigs.getByName("debug")
+                else -> null
             }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -130,4 +136,22 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+}
+
+// Fail clearly when a production release build is requested without signing material,
+// instead of emitting a mis-signed (or unsigned) release artifact. Debug builds are
+// unaffected. Set ALLOW_DEBUG_RELEASE_SIGNING=true only for an explicit local test build.
+gradle.taskGraph.whenReady {
+    val releasePackaging = allTasks.any { task ->
+        task.project == project &&
+            (task.name == "assembleRelease" || task.name == "bundleRelease" || task.name == "packageRelease")
+    }
+    if (releasePackaging && !hasReleaseSigning && !allowDebugReleaseSigning) {
+        throw GradleException(
+            "Release signing is not configured. Provide RELEASE_KEYSTORE_PATH, " +
+                "RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD " +
+                "(environment or -P properties), or set ALLOW_DEBUG_RELEASE_SIGNING=true to " +
+                "produce an explicitly debug-signed local test build.",
+        )
+    }
 }

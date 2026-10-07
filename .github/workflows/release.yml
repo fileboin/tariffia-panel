@@ -78,8 +78,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_KEYSTORE_BASE64:-}" ]; then
-            echo "::error::Release signing is not configured. Add these repository secrets: RELEASE_KEYSTORE_BASE64, RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD."
-            exit 1
+            echo "::warning::RELEASE_KEYSTORE_BASE64 is not set. The Gradle release build will fail closed until the signing secrets are configured (RELEASE_KEYSTORE_BASE64, RELEASE_KEYSTORE_PASSWORD, RELEASE_KEY_ALIAS, RELEASE_KEY_PASSWORD)."
+            exit 0
           fi
           umask 077
           printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
