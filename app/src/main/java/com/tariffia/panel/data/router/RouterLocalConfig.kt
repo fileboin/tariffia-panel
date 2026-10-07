@@ -6,23 +6,37 @@ package com.tariffia.panel.data.router
  */
 object RouterLocalConfig {
 
-    /** The embedded Router always binds to loopback on this address. */
+    /** The embedded Router binds to loopback on this address. Used as the default. */
     const val LOCAL_URL = "http://127.0.0.1:8910"
 
-    /** The resolved config: the local URL plus the token the Router must be given. */
+    /** The resolved config: the effective URL, the token, and what had to be created. */
     data class Resolved(
         val url: String,
         val token: String,
         val tokenWasGenerated: Boolean,
+        /** True when no URL was configured and the loopback default was applied. */
+        val urlWasDefaulted: Boolean,
     )
 
     /**
-     * Resolves the config for the embedded Router. A non-blank stored token is reused;
-     * otherwise [generate] is called. The URL is always the local one.
+     * Resolves the config for the embedded Router.
+     *
+     * - A non-blank stored URL is preserved (a deliberately configured remote URL is never
+     *   overwritten); when none is configured the loopback default applies.
+     * - A non-blank stored token is reused; otherwise [generate] is called.
      */
-    fun resolve(storedToken: String?, generate: () -> String): Resolved {
-        val hasStored = !storedToken.isNullOrBlank()
-        val token = if (hasStored) storedToken!! else generate()
-        return Resolved(url = LOCAL_URL, token = token, tokenWasGenerated = !hasStored)
+    fun resolve(storedUrl: String?, storedToken: String?, generate: () -> String): Resolved {
+        val hasUrl = !storedUrl.isNullOrBlank()
+        val url = if (hasUrl) storedUrl!!.trim() else LOCAL_URL
+
+        val hasToken = !storedToken.isNullOrBlank()
+        val token = if (hasToken) storedToken!! else generate()
+
+        return Resolved(
+            url = url,
+            token = token,
+            tokenWasGenerated = !hasToken,
+            urlWasDefaulted = !hasUrl,
+        )
     }
 }

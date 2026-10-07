@@ -87,18 +87,27 @@ object RouterRuntime {
     private fun infoFile(ctx: Context): File = File(ctx.filesDir, "node-info.json")
 
     /**
-     * Ensures the embedded Router config exists: URL = loopback, token = the stored
-     * one or a freshly generated random token. Reuses [SecureSettingsStore] (Keystore
-     * encryption) — no separate storage.
+     * Ensures the embedded Router config exists: the loopback URL is used only when no URL
+     * is configured, and the token is the stored one or a freshly generated random token.
+     * Reuses [SecureSettingsStore] (Keystore encryption) — no separate storage.
+     *
+     * Persists only what is missing (a defaulted URL and/or a generated token); a
+     * deliberately configured URL is never overwritten.
      */
     fun ensureLocalConfig(ctx: Context): RouterLocalConfig.Resolved {
         val store = SecureSettingsStore(ctx)
-        val resolved = RouterLocalConfig.resolve(store.readToken()) { RouterToken.generate() }
-        // Persist the loopback URL; store the token only when it was just generated.
-        store.save(
-            RouterLocalConfig.LOCAL_URL,
-            if (resolved.tokenWasGenerated) resolved.token else null,
-        )
+        val settings = store.load()
+        val resolved = RouterLocalConfig.resolve(
+            storedUrl = settings.routerUrl,
+            storedToken = store.readToken(),
+        ) { RouterToken.generate() }
+
+        if (resolved.urlWasDefaulted || resolved.tokenWasGenerated) {
+            store.save(
+                resolved.url,
+                if (resolved.tokenWasGenerated) resolved.token else null,
+            )
+        }
         return resolved
     }
 
