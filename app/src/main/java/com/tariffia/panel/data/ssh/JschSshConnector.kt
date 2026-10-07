@@ -6,6 +6,7 @@ import com.jcraft.jsch.HostKeyRepository
 import com.jcraft.jsch.JSch
 import com.jcraft.jsch.JSchException
 import com.jcraft.jsch.Session
+import com.jcraft.jsch.UIKeyboardInteractive
 import com.jcraft.jsch.UserInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -53,11 +54,8 @@ class JschSshConnector : SshConnector {
         try {
             val opened = jsch.getSession(profile.username, profile.host, profile.port).apply {
                 setConfig("StrictHostKeyChecking", "yes")
-                // Public-key or password only — never keyboard-interactive prompt handling.
-                setConfig(
-                    "PreferredAuthentications",
-                    if (credentials is SshCredentials.Password) "password" else "publickey",
-                )
+                // Password mode also offers keyboard-interactive (common on PAM servers).
+                setConfig("PreferredAuthentications", SshAuthConfig.preferredAuthentications(profile.authMethod))
                 setHostKeyRepository(object : HostKeyRepository {
                     override fun check(host: String?, key: ByteArray?): Int {
                         if (key == null) return HostKeyRepository.NOT_INCLUDED
@@ -78,9 +76,11 @@ class JschSshConnector : SshConnector {
                     override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
                 })
             }
-            // Password (if any) is set on the session only; it is never logged.
+            // Password (if any) is set on the session only; it is never logged. A UserInfo
+            // answers keyboard-interactive prompts with the same password (no display).
             if (credentials is SshCredentials.Password) {
                 opened.setPassword(credentials.password)
+                opened.userInfo = PasswordUserInfo(credentials.password)
             }
             connecting = opened
             opened.connect(CONNECT_TIMEOUT_MS)
@@ -134,4 +134,24 @@ class JschSshConnector : SshConnector {
         const val CHANNEL_TIMEOUT_MS = 8_000
         const val POLL_INTERVAL_MS = 50L
     }
+}
+
+/**
+ * Answers JSch password/keyboard-interactive prompts with the session password. The
+ * password is held in memory only and is never logged or displayed.
+ */
+private class PasswordUserInfo(private val password: String) : UserInfo, UIKeyboardInteractive {
+    override fun getPassword(): String = password
+    override fun getPassphrase(): String? = null
+    override fun promptPassword(message: String?): Boolean = true
+    override fun promptPassphrase(message: String?): Boolean = false
+    override fun promptYesNo(message: String?): Boolean = false
+    override fun showMessage(message: String?) = Unit
+    override fun promptKeyboardInteractive(
+        destination: String?,
+        name: String?,
+        instruction: String?,
+        prompt: Array<out String>?,
+        echo: BooleanArray?,
+    ): Array<String> = Array(prompt?.size ?: 0) { password }
 }
