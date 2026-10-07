@@ -28,6 +28,17 @@ val allowDebugReleaseSigning =
     (System.getenv("ALLOW_DEBUG_RELEASE_SIGNING") ?: "").equals("true", ignoreCase = true) ||
         (project.findProperty("ALLOW_DEBUG_RELEASE_SIGNING") as String?)?.equals("true", ignoreCase = true) == true
 
+// Stable DEBUG signing identity: a committed, public TEST keystore (password "android").
+// It is NOT a production/release key and must never be used to sign a release. Its only
+// purpose is to give every CI `assembleDebug` APK ONE certificate, so a debug build can be
+// updated in place by a later debug build (Android refuses updates signed by a different
+// certificate; the default AGP debug keystore is generated fresh on every CI runner).
+// Release signing above is untouched. See app/debug.keystore.README.md.
+val debugKeystoreFile = file("debug.keystore")
+val debugKeystorePassword = "android"
+val debugKeyAlias = "androiddebugkey"
+val debugKeyPassword = "android"
+
 android {
     namespace = "com.tariffia.panel"
     compileSdk = 34
@@ -68,6 +79,15 @@ android {
     }
 
     signingConfigs {
+        // Pin the debug signing to the committed stable keystore, overriding the per-run
+        // ephemeral ~/.android/debug.keystore AGP would otherwise generate on a fresh CI
+        // runner. DEBUG ONLY — never used for release.
+        maybeCreate("debug").apply {
+            storeFile = debugKeystoreFile
+            storePassword = debugKeystorePassword
+            keyAlias = debugKeyAlias
+            keyPassword = debugKeyPassword
+        }
         // Only created when CI provides a real keystore; nothing secret is stored here.
         if (hasReleaseSigning) {
             create("release") {

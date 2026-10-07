@@ -28,6 +28,11 @@ app/src/main/cpp/include/
 secrets/
 config.local.*
 
+# Exception: the committed DEBUG-ONLY signing keystore. It is a public test key (password
+# "android") that gives every CI debug APK ONE stable certificate so CI builds can update each
+# other in place. It must NEVER be used for release/production signing. See app/debug.keystore.README.md.
+!app/debug.keystore
+
 # OS
 .DS_Store
 Thumbs.db
