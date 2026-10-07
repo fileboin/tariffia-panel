@@ -55,6 +55,12 @@ object RouterRuntime {
     @Volatile
     private var activeToken: String? = null
 
+    /** Makes [start] atomic so a repeated/racing call can never start a second Node. */
+    private val startLock = Any()
+
+    /** Single-flight guard so only one bring-up runs at a time (repeated START is a no-op). */
+    private val bringUpGate = StartGate()
+
     private val _state = MutableStateFlow<State>(State.Idle)
     val state: StateFlow<State> = _state.asStateFlow()
 
@@ -149,19 +155,24 @@ object RouterRuntime {
         return root
     }
 
-    /** Starts the embedded Node runtime exactly once. */
-    fun start(ctx: Context): StartResult {
-        if (started) return StartResult(true, "already started")
+    /** Starts the embedded Node runtime exactly once (atomic; never a second instance). */
+    fun start(ctx: Context): StartResult = synchronized(startLock) {
+        if (started) return@synchronized StartResult(true, "already started")
+        // Reserve before the native call so a repeated/racing call cannot also start.
+        started = true
+
         val root = try {
             ensureRuntime(ctx)
         } catch (e: Exception) {
-            return StartResult(false, "could not prepare runtime: ${e.message}")
+            started = false
+            return@synchronized StartResult(false, "could not prepare runtime: ${e.message}")
         }
 
         val config = try {
             ensureLocalConfig(ctx)
         } catch (e: Exception) {
-            return StartResult(false, "could not prepare router config: ${e.message}")
+            started = false
+            return@synchronized StartResult(false, "could not prepare router config: ${e.message}")
         }
         activeToken = config.token
 
@@ -189,11 +200,14 @@ object RouterRuntime {
         val ok = try {
             nativeStart(root.absolutePath, launcher, stdout, stderr, env, arrayOf(launcher))
         } catch (e: Throwable) {
-            return StartResult(false, "native start failed: ${e.message}")
+            started = false
+            return@synchronized StartResult(false, "native start failed: ${e.message}")
         }
-        if (!ok) return StartResult(false, "nativeStart returned false")
-        started = true
-        return StartResult(true, "node::Start launched")
+        if (!ok) {
+            started = false
+            return@synchronized StartResult(false, "nativeStart returned false")
+        }
+        StartResult(true, "node::Start launched")
     }
 
     /**
@@ -228,35 +242,41 @@ object RouterRuntime {
      */
     suspend fun bringUp(ctx: Context): Boolean {
         if (_state.value is State.Ready) return true
-        _state.value = State.Starting
-        _syncSummary.value = null
+        // Single-flight: a repeated START while one bring-up is in flight is a no-op.
+        if (!bringUpGate.tryEnter()) return false
+        try {
+            _state.value = State.Starting
+            _syncSummary.value = null
 
-        val outcome = try {
-            val healthy = if (isHealthyNow(ctx)) {
-                true
-            } else {
-                val result = start(ctx)
-                if (!result.started) {
-                    _state.value = RouterStateMapping.from(false, false, result.message)
-                    return false
+            val outcome = try {
+                val healthy = if (isHealthyNow(ctx)) {
+                    true
+                } else {
+                    val result = start(ctx)
+                    if (!result.started) {
+                        _state.value = RouterStateMapping.from(false, false, result.message)
+                        return false
+                    }
+                    awaitHealthy(ctx)
                 }
-                awaitHealthy(ctx)
+                RouterStateMapping.from(
+                    started = true,
+                    healthy = healthy,
+                    failureMessage = "Router did not answer /healthz on 127.0.0.1:8910.",
+                )
+            } catch (t: Throwable) {
+                State.Error("runtime init failed: ${t.message}")
             }
-            RouterStateMapping.from(
-                started = true,
-                healthy = healthy,
-                failureMessage = "Router did not answer /healthz on 127.0.0.1:8910.",
-            )
-        } catch (t: Throwable) {
-            State.Error("runtime init failed: ${t.message}")
-        }
 
-        _state.value = outcome
-        if (outcome is State.Ready) {
-            syncProviderKeys(ctx)
-            return true
+            _state.value = outcome
+            if (outcome is State.Ready) {
+                syncProviderKeys(ctx)
+                return true
+            }
+            return false
+        } finally {
+            bringUpGate.exit()
         }
-        return false
     }
 
     /** After READY, push every locally stored provider key to the Router (PR3). */

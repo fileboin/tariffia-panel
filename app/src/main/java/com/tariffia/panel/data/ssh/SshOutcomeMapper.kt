@@ -21,7 +21,11 @@ object SshOutcomeMapper {
         pinned: HostKeyPin?,
         presented: HostKeyIdentity?,
     ): SshConnectOutcome = when {
-        message.contains("UnknownHostKey", ignoreCase = true) ->
+        // JSch emits "UnknownHostKey: ..." only when StrictHostKeyChecking != yes.
+        // With StrictHostKeyChecking=yes (our connector) it instead throws
+        // "reject HostKey: <host>" for an unpinned host. Both are the unknown-host-key case.
+        message.contains("UnknownHostKey", ignoreCase = true) ||
+            message.contains("reject HostKey", ignoreCase = true) ->
             presented?.let { SshConnectOutcome.HostKeyUnknown(it) }
                 ?: SshConnectOutcome.Failed("Connection failed.")
 
