@@ -17,12 +17,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -77,9 +79,14 @@ fun HomeScreen(
         (updateState as? UpdateState.Available)?.let { update ->
             UpdateBanner(
                 version = update.version,
-                onView = {
+                isInstalling = state.isInstalling,
+                installMessage = state.installMessage,
+                needsInstallPermission = state.needsInstallPermission,
+                onInstall = viewModel::requestInstall,
+                onOpenPermissionSettings = viewModel::openInstallPermissionSettings,
+                onViewRelease = {
                     runCatching {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.url)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(update.htmlUrl)))
                     }
                 },
             )
@@ -134,6 +141,21 @@ fun HomeScreen(
         if (state.isLoading) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         }
+    }
+
+    if (state.showInstallConfirmation) {
+        AlertDialog(
+            onDismissRequest = viewModel::cancelInstall,
+            title = { Text("Download and install update?") },
+            text = {
+                Text(
+                    "The update APK will be downloaded and Android's installer will open. " +
+                        "You confirm the install there.",
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::confirmInstall) { Text("Download & install") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelInstall) { Text("Cancel") } },
+        )
     }
 }
 
@@ -255,9 +277,17 @@ private fun statusColor(status: HomeStatus): Color = when (status) {
     else -> ErrorColor
 }
 
-/** Compact, unobtrusive "update available" banner. Read-only; opens the browser. */
+/** Compact "update available" banner with an in-app download & install action. */
 @Composable
-private fun UpdateBanner(version: String, onView: () -> Unit) {
+private fun UpdateBanner(
+    version: String,
+    isInstalling: Boolean,
+    installMessage: String?,
+    needsInstallPermission: Boolean,
+    onInstall: () -> Unit,
+    onOpenPermissionSettings: () -> Unit,
+    onViewRelease: () -> Unit,
+) {
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
             modifier = Modifier.padding(16.dp),
@@ -273,7 +303,38 @@ private fun UpdateBanner(version: String, onView: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
             )
-            Button(onClick = onView) { Text("View update") }
+            Button(
+                onClick = onInstall,
+                enabled = !isInstalling,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Download & install")
+            }
+            OutlinedButton(
+                onClick = onViewRelease,
+                enabled = !isInstalling,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("View release page")
+            }
+            if (isInstalling) {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            }
+            installMessage?.let { message ->
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+            if (needsInstallPermission) {
+                Button(
+                    onClick = onOpenPermissionSettings,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("Open install settings")
+                }
+            }
         }
     }
 }
