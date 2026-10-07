@@ -1,14 +1,20 @@
 package com.tariffia.panel.ui.screens
 
 import android.app.Application
+import android.content.Intent
+import android.net.Uri
+import android.provider.Settings
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.router.RouterClient
 import com.tariffia.panel.data.router.RouterResult
 import com.tariffia.panel.data.update.AvailableUpdate
+import com.tariffia.panel.data.update.InstallOutcome
+import com.tariffia.panel.data.update.InstalledApp
 import com.tariffia.panel.data.update.UpdateChecker
-import com.tariffia.panel.data.update.installedVersion
+import com.tariffia.panel.data.update.UpdateInstaller
+import com.tariffia.panel.data.update.installedApp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -43,12 +49,17 @@ data class HomeUiState(
     val models: List<String> = emptyList(),
     val modelsError: String? = null,
     val providerSummary: HomeProviderSummary? = null,
+    /** Update install flow. */
+    val showInstallConfirmation: Boolean = false,
+    val isInstalling: Boolean = false,
+    val installMessage: String? = null,
+    val needsInstallPermission: Boolean = false,
 )
 
 /** Best-effort update availability. Failure is silent (stays [None]). */
 sealed interface UpdateState {
     data object None : UpdateState
-    data class Available(val version: String, val url: String) : UpdateState
+    data class Available(val version: String, val htmlUrl: String, val apkUrl: String) : UpdateState
 }
 
 /**
@@ -62,7 +73,10 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SecureSettingsStore(application)
     private val client = RouterClient()
     private val updateChecker = UpdateChecker()
+    private val installer = UpdateInstaller()
+    private val installed: InstalledApp = installedApp(application)
     private var refreshJob: Job? = null
+    private var installJob: Job? = null
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -83,12 +97,65 @@ class HomeViewModel(application: Application) : AndroidViewModel(application) {
         if (updateCheckedThisProcess) return
         updateCheckedThisProcess = true
         viewModelScope.launch {
-            val app = getApplication<Application>()
-            val version = installedVersion(app)
-            val update: AvailableUpdate? = updateChecker.check(version)
+            val update: AvailableUpdate? = updateChecker.check(installed)
             if (update != null) {
-                _updateState.value = UpdateState.Available(update.version, update.url)
+                _updateState.value = UpdateState.Available(update.version, update.htmlUrl, update.apkUrl)
             }
+        }
+    }
+
+    /** Ask for confirmation before downloading and launching the installer. */
+    fun requestInstall() {
+        if (_updateState.value !is UpdateState.Available) return
+        _uiState.update { it.copy(showInstallConfirmation = true, installMessage = null) }
+    }
+
+    fun cancelInstall() {
+        _uiState.update { it.copy(showInstallConfirmation = false) }
+    }
+
+    /** Downloads the APK, then hands it to the system installer. */
+    fun confirmInstall() {
+        if (installJob?.isActive == true) return
+        val update = _updateState.value as? UpdateState.Available ?: return
+        _uiState.update {
+            it.copy(showInstallConfirmation = false, isInstalling = true, installMessage = null)
+        }
+        installJob = viewModelScope.launch {
+            val app = getApplication<Application>()
+            val file = installer.download(app, update.apkUrl, UpdateInstaller.DEFAULT_FILE_NAME)
+            if (file == null) {
+                _uiState.update {
+                    it.copy(isInstalling = false, installMessage = "Download failed. Check your connection and try again.")
+                }
+                return@launch
+            }
+            val outcome = installer.install(app, file)
+            _uiState.update {
+                it.copy(
+                    isInstalling = false,
+                    needsInstallPermission = outcome is InstallOutcome.PermissionRequired,
+                    installMessage = when (outcome) {
+                        InstallOutcome.Launched -> "Installer opened. Confirm the install to finish updating."
+                        InstallOutcome.PermissionRequired ->
+                            "Allow \"Install unknown apps\" for Tariffia Panel, then try again."
+                        is InstallOutcome.Failed -> "Could not start the installer: ${outcome.message}"
+                    },
+                )
+            }
+        }
+    }
+
+    /** Opens the system screen where the user allows this app to install packages. */
+    fun openInstallPermissionSettings() {
+        val app = getApplication<Application>()
+        runCatching {
+            app.startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:${app.packageName}"),
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }
     }
 

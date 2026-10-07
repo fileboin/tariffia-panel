@@ -149,14 +149,40 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
                     color = MaterialTheme.colorScheme.primary,
                 )
                 Button(
-                    onClick = {
-                        runCatching {
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(check.url)))
-                        }
-                    },
+                    onClick = viewModel::requestInstall,
+                    enabled = !state.isInstalling,
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text("View update")
+                    Text("Download & install")
+                }
+                OutlinedButton(
+                    onClick = {
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(check.htmlUrl)))
+                        }
+                    },
+                    enabled = !state.isInstalling,
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("View release page")
+                }
+                if (state.isInstalling) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+                state.installMessage?.let { message ->
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                }
+                if (state.needsInstallPermission) {
+                    Button(
+                        onClick = viewModel::openInstallPermissionSettings,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Open install settings")
+                    }
                 }
             }
             UpdateCheckState.Unable -> Text(
@@ -174,6 +200,21 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
             text = { Text("The stored router token will be removed. You can add it again later.") },
             confirmButton = { TextButton(onClick = viewModel::confirmClearToken) { Text("Clear") } },
             dismissButton = { TextButton(onClick = viewModel::cancelClearToken) { Text("Cancel") } },
+        )
+    }
+
+    if (state.showInstallConfirmation) {
+        AlertDialog(
+            onDismissRequest = viewModel::cancelInstall,
+            title = { Text("Download and install update?") },
+            text = {
+                Text(
+                    "The update APK will be downloaded and Android's installer will open. " +
+                        "You confirm the install there.",
+                )
+            },
+            confirmButton = { TextButton(onClick = viewModel::confirmInstall) { Text("Download & install") } },
+            dismissButton = { TextButton(onClick = viewModel::cancelInstall) { Text("Cancel") } },
         )
     }
 }

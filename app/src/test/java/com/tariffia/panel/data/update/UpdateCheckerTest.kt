@@ -12,8 +12,30 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
-/** JVM tests for the version comparator and the best-effort update check. */
+/** JVM tests for version comparison, release/asset selection and the best-effort check. */
 class UpdateCheckerTest {
+
+    private fun release(
+        tag: String,
+        publishedAt: String = "2026-10-01T00:00:00Z",
+        draft: Boolean = false,
+        htmlUrl: String = "https://github.com/fileboin/tariffia-panel/releases/tag/$tag",
+        assets: List<GitHubAsset> = listOf(apk("tariffia-panel-$tag.apk")),
+    ) = GitHubRelease(
+        tag_name = tag,
+        html_url = htmlUrl,
+        draft = draft,
+        prerelease = true,
+        published_at = publishedAt,
+        assets = assets,
+    )
+
+    private fun apk(name: String) = GitHubAsset(
+        name = name,
+        browser_download_url = "https://github.com/fileboin/tariffia-panel/releases/download/x/$name",
+    )
+
+    private val installed = InstalledApp("0.0.2", parseTimestamp("2026-10-01T00:00:00Z")!!)
 
     /* ------------------------------- pure helpers ------------------------------- */
 
@@ -26,6 +48,7 @@ class UpdateCheckerTest {
         assertNull(parseVersion("garbage"))
         assertNull(parseVersion(""))
         assertNull(parseVersion("v"))
+        assertNull(parseVersion("pr19-keyless-ssh-start-550abd4"))
     }
 
     @Test
@@ -37,18 +60,91 @@ class UpdateCheckerTest {
     }
 
     @Test
-    fun evaluateUpdate_cases() {
-        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"
-        assertEquals(AvailableUpdate("0.0.3", url), evaluateUpdate("0.0.2", "v0.0.3", url))
-        assertNull(evaluateUpdate("0.0.2", "v0.0.2", url))
-        assertEquals(AvailableUpdate("0.0.10", url), evaluateUpdate("0.0.9", "v0.0.10", url))
-        assertEquals(AvailableUpdate("0.0.10", url), evaluateUpdate("0.0.2", "v0.0.10", url))
-        assertNull(evaluateUpdate("0.0.2", "v0.0.2-router", url))
-        assertNull(evaluateUpdate("0.0.2", "garbage", url))
-        assertNull(evaluateUpdate("0.0.2", "", url))
-        assertNull(evaluateUpdate("", "v0.0.3", url))
-        assertNull(evaluateUpdate("0.0.2", "v0.0.3", ""))
-        assertNull(evaluateUpdate("0.0.2", "v0.0.3", "ftp://example.com"))
+    fun parseTimestamp_iso8601() {
+        assertEquals(0L, parseTimestamp("1970-01-01T00:00:00Z"))
+        assertNull(parseTimestamp("not a date"))
+        assertNull(parseTimestamp(""))
+    }
+
+    /* ------------------------------- selection ---------------------------------- */
+
+    @Test
+    fun doesNotAssumeFirstReleaseIsCorrect() {
+        // First entry is a draft; second has no APK asset; third is the real one.
+        val releases = listOf(
+            release("draft", draft = true),
+            release("no-asset", assets = emptyList()),
+            release("v0.0.3"),
+        )
+        val update = selectUpdate(releases, installed)
+        assertEquals("0.0.3", update?.version)
+    }
+
+    @Test
+    fun picksMostRecentlyPublishedApkBearingRelease() {
+        val releases = listOf(
+            release("v0.0.3", publishedAt = "2026-09-01T00:00:00Z"),
+            release("v0.0.4", publishedAt = "2026-09-20T00:00:00Z"),
+            release("v0.0.5", publishedAt = "2026-09-10T00:00:00Z"),
+        )
+        val update = selectUpdate(releases, installed)
+        assertEquals("0.0.4", update?.version)
+    }
+
+    @Test
+    fun newestPublishedReleaseIsSelected() {
+        val releases = listOf(
+            release("v0.0.5", publishedAt = "2026-09-01T00:00:00Z"),
+            release("v0.0.4", publishedAt = "2026-09-20T00:00:00Z"),
+        )
+        // Selection is by newest published_at; the version is then compared to decide "newer".
+        assertEquals("0.0.4", selectUpdate(releases, installed)?.version)
+    }
+
+    @Test
+    fun currentVersionIsUpToDate() {
+        assertNull(selectUpdate(listOf(release("v0.0.2")), installed))
+    }
+
+    @Test
+    fun olderVersionIsUpToDate() {
+        assertNull(selectUpdate(listOf(release("v0.0.1")), installed))
+    }
+
+    @Test
+    fun adHocTagFallsBackToPublishedTime() {
+        // Tag does not parse: a release published after the install time is an update.
+        val newer = release("pr19-keyless-ssh-start-550abd4", publishedAt = "2026-10-05T00:00:00Z")
+        val update = selectUpdate(listOf(newer), installed)
+        assertEquals("pr19-keyless-ssh-start-550abd4", update?.version)
+        assertTrue(update!!.apkUrl.endsWith(".apk"))
+    }
+
+    @Test
+    fun adHocTagPublishedBeforeInstallIsUpToDate() {
+        val older = release("pr18-fix", publishedAt = "2026-09-01T00:00:00Z")
+        assertNull(selectUpdate(listOf(older), installed))
+    }
+
+    @Test
+    fun assetSelectionPrefersPanelApk() {
+        val r = release(
+            "v0.0.3",
+            assets = listOf(apk("other.apk"), apk("tariffia-panel-debug.apk")),
+        )
+        assertEquals("tariffia-panel-debug.apk", apkAssetOf(r)?.name)
+    }
+
+    @Test
+    fun nonHttpsAssetIsIgnored() {
+        val r = release("v0.0.3", assets = listOf(GitHubAsset("x.apk", "http://insecure/x.apk")))
+        assertNull(apkAssetOf(r))
+        assertNull(selectUpdate(listOf(r), installed))
+    }
+
+    @Test
+    fun emptyReleasesIsNull() {
+        assertNull(selectUpdate(emptyList(), installed))
     }
 
     /* ------------------------------- HTTP behavior ------------------------------ */
@@ -70,118 +166,59 @@ class UpdateCheckerTest {
         }
     }
 
-    private fun checker() = UpdateChecker(OkHttpClient(), server.url("/releases/latest").toString())
+    private fun checker() = UpdateChecker(OkHttpClient(), server.url("/releases?per_page=50").toString())
+
+    private fun body(vararg tags: String): String {
+        val entries = tags.joinToString(",") { tag ->
+            """{"tag_name":"$tag","html_url":"https://github.com/fileboin/tariffia-panel/releases/tag/$tag","draft":false,"prerelease":true,"published_at":"2026-10-05T00:00:00Z","assets":[{"name":"tariffia-panel-$tag.apk","browser_download_url":"https://github.com/fileboin/tariffia-panel/releases/download/$tag/tariffia-panel-$tag.apk"}]}"""
+        }
+        return "[$entries]"
+    }
 
     @Test
     fun newerRelease_returnsUpdate_andSendsAcceptHeader() = runBlocking {
-        server.enqueue(
-            MockResponse().setResponseCode(200).setBody(
-                """{"tag_name":"v0.0.3","html_url":"https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3","prerelease":false}""",
-            ),
-        )
-        val result = checker().check("0.0.2")
-        assertNotNull(result)
-        assertEquals("0.0.3", result!!.version)
-        assertEquals("https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3", result.url)
+        server.enqueue(MockResponse().setResponseCode(200).setBody(body("v0.0.3")))
+        val result = checker().checkDetailed(installed)
+        assertTrue(result is UpdateResult.Available)
+        val update = (result as UpdateResult.Available).update
+        assertEquals("0.0.3", update.version)
+        assertEquals("https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3", update.htmlUrl)
+        assertTrue(update.apkUrl.endsWith(".apk"))
         val recorded = server.takeRequest()
-        assertEquals("/releases/latest", recorded.path)
+        assertEquals("/releases?per_page=50", recorded.path)
         assertEquals("application/vnd.github+json", recorded.getHeader("Accept"))
     }
 
     @Test
-    fun currentRelease_returnsNull() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.2","html_url":"https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.2"}"""))
-        assertNull(checker().check("0.0.2"))
+    fun adHocPrereleaseTag_isFound() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody(body("pr19-keyless-ssh-start-550abd4")))
+        val result = checker().checkDetailed(installed)
+        assertNotNull(result as? UpdateResult.Available)
     }
 
     @Test
-    fun malformedJson_returnsNull() = runBlocking {
+    fun emptyReleaseList_isUpToDate() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("[]"))
+        assertEquals(UpdateResult.UpToDate, checker().checkDetailed(installed))
+    }
+
+    @Test
+    fun malformedJson_isFailed() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
-        assertNull(checker().check("0.0.2"))
+        assertEquals(UpdateResult.Failed, checker().checkDetailed(installed))
     }
 
     @Test
-    fun missingTagName_returnsNull() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"html_url":"https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"}"""))
-        assertNull(checker().check("0.0.2"))
-    }
-
-    @Test
-    fun invalidHtmlUrl_returnsNull() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.3","html_url":""}"""))
-        assertNull(checker().check("0.0.2"))
-    }
-
-    @Test
-    fun http404_returnsNull() = runBlocking {
+    fun http404_isFailed() = runBlocking {
         server.enqueue(MockResponse().setResponseCode(404))
-        assertNull(checker().check("0.0.2"))
+        assertEquals(UpdateResult.Failed, checker().checkDetailed(installed))
     }
 
     @Test
-    fun http500_returnsNull() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(500))
-        assertNull(checker().check("0.0.2"))
-    }
-
-    @Test
-    fun unreachable_returnsNullWithoutThrowing() = runBlocking {
+    fun unreachable_isFailedWithoutThrowing() = runBlocking {
         val c = checker()
         server.shutdown()
-        assertNull(c.check("0.0.2"))
-    }
-
-    /* ------------------------------- older version ------------------------------ */
-
-    @Test
-    fun olderRelease_isNoUpdate() {
-        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.2"
-        assertNull(evaluateUpdate("0.0.3", "v0.0.2", url))
-        assertEquals(UpdateResult.UpToDate, evaluateResult("0.0.3", "v0.0.2", url))
-    }
-
-    @Test
-    fun evaluateResult_states() {
-        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"
-        assertEquals(UpdateResult.Available("0.0.3", url), evaluateResult("0.0.2", "v0.0.3", url))
-        assertEquals(UpdateResult.UpToDate, evaluateResult("0.0.2", "v0.0.2", url))
-        assertEquals(UpdateResult.Failed, evaluateResult("0.0.2", "garbage", url))
-        assertEquals(UpdateResult.Failed, evaluateResult("0.0.2", "v0.0.3", ""))
-        assertEquals(UpdateResult.Failed, evaluateResult("", "v0.0.3", url))
-    }
-
-    /* ------------------------------- detailed check ------------------------------ */
-
-    @Test
-    fun checkDetailed_newer_isAvailable() = runBlocking {
-        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.3"
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.3","html_url":"$url"}"""))
-        assertEquals(UpdateResult.Available("0.0.3", url), checker().checkDetailed("0.0.2"))
-    }
-
-    @Test
-    fun checkDetailed_current_isUpToDate() = runBlocking {
-        val url = "https://github.com/fileboin/tariffia-panel/releases/tag/v0.0.2"
-        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"tag_name":"v0.0.2","html_url":"$url"}"""))
-        assertEquals(UpdateResult.UpToDate, checker().checkDetailed("0.0.2"))
-    }
-
-    @Test
-    fun checkDetailed_httpError_isFailed() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(404))
-        assertEquals(UpdateResult.Failed, checker().checkDetailed("0.0.2"))
-    }
-
-    @Test
-    fun checkDetailed_malformed_isFailed() = runBlocking {
-        server.enqueue(MockResponse().setResponseCode(200).setBody("not json"))
-        assertEquals(UpdateResult.Failed, checker().checkDetailed("0.0.2"))
-    }
-
-    @Test
-    fun checkDetailed_unreachable_isFailed() = runBlocking {
-        val c = checker()
-        server.shutdown()
-        assertEquals(UpdateResult.Failed, c.checkDetailed("0.0.2"))
+        assertEquals(UpdateResult.Failed, c.checkDetailed(installed))
+        assertNull(c.check(installed))
     }
 }
