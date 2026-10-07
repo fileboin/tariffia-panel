@@ -75,58 +75,65 @@ fun ProviderDetailsScreen(
         }
 
         Text(text = "API key", style = MaterialTheme.typography.titleMedium)
-        Text(
-            text = "API key stored locally: ${if (state.hasStoredKey) "Yes" else "No"}",
-            style = MaterialTheme.typography.bodyLarge,
-        )
-        OutlinedTextField(
-            value = state.keyInput,
-            onValueChange = viewModel::onKeyChange,
-            label = { Text("API key") },
-            placeholder = { Text("Paste the provider API key") },
-            singleLine = true,
-            enabled = actionsEnabled,
-            visualTransformation = if (state.keyVisible) {
-                VisualTransformation.None
-            } else {
-                PasswordVisualTransformation()
-            },
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            trailingIcon = {
-                TextButton(onClick = viewModel::onToggleKeyVisibility) {
-                    Text(if (state.keyVisible) "Hide" else "Show")
-                }
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Text(
-            text = "Stored encrypted on this device (Android Keystore). Not sent to the router or VPS yet.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.outline,
-        )
+        if (state.keyless) {
+            Text(
+                text = "No API key required — this provider is keyless.",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+        } else {
+            Text(
+                text = "API key stored locally: ${if (state.hasStoredKey) "Yes" else "No"}",
+                style = MaterialTheme.typography.bodyLarge,
+            )
+            OutlinedTextField(
+                value = state.keyInput,
+                onValueChange = viewModel::onKeyChange,
+                label = { Text("API key") },
+                placeholder = { Text("Paste the provider API key") },
+                singleLine = true,
+                enabled = actionsEnabled,
+                visualTransformation = if (state.keyVisible) {
+                    VisualTransformation.None
+                } else {
+                    PasswordVisualTransformation()
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    TextButton(onClick = viewModel::onToggleKeyVisibility) {
+                        Text(if (state.keyVisible) "Hide" else "Show")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = "Stored encrypted on this device (Android Keystore). Not sent to the router or VPS yet.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+            )
 
-        Button(
-            onClick = viewModel::saveKey,
-            enabled = actionsEnabled,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Save API key")
-        }
+            Button(
+                onClick = viewModel::saveKey,
+                enabled = actionsEnabled,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save API key")
+            }
 
-        OutlinedButton(
-            onClick = viewModel::requestClear,
-            enabled = actionsEnabled && state.hasStoredKey,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Clear API key")
-        }
+            OutlinedButton(
+                onClick = viewModel::requestClear,
+                enabled = actionsEnabled && state.hasStoredKey,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Clear API key")
+            }
 
-        OutlinedButton(
-            onClick = viewModel::syncKeyToRouter,
-            enabled = actionsEnabled && state.hasStoredKey,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text("Sync to Router")
+            OutlinedButton(
+                onClick = viewModel::syncKeyToRouter,
+                enabled = actionsEnabled && state.hasStoredKey,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Sync to Router")
+            }
         }
 
         state.statusMessage?.let { message ->
