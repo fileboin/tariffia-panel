@@ -4,6 +4,24 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// Release signing is supplied by CI through environment variables (or Gradle -P properties).
+// No keystore and no password is ever committed. When the values are absent (local
+// development), the release build falls back to the debug signing config so it stays
+// buildable — but a user-facing release MUST be signed with the stable keystore in CI.
+fun signingValue(name: String): String? =
+    System.getenv(name)?.takeIf { it.isNotBlank() }
+        ?: (project.findProperty(name) as String?)?.takeIf { it.isNotBlank() }
+
+val releaseKeystorePath = signingValue("RELEASE_KEYSTORE_PATH")
+val releaseKeystorePassword = signingValue("RELEASE_KEYSTORE_PASSWORD")
+val releaseKeyAlias = signingValue("RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingValue("RELEASE_KEY_PASSWORD")
+val hasReleaseSigning = releaseKeystorePath != null &&
+    file(releaseKeystorePath).exists() &&
+    releaseKeystorePassword != null &&
+    releaseKeyAlias != null &&
+    releaseKeyPassword != null
+
 android {
     namespace = "com.tariffia.panel"
     compileSdk = 34
@@ -43,12 +61,29 @@ android {
         }
     }
 
+    signingConfigs {
+        // Only created when CI provides a real keystore; nothing secret is stored here.
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Sign the release build with the built-in debug key so it is installable
-            // without any external keystore/secret. Not for Play Store distribution.
-            signingConfig = signingConfigs.getByName("debug")
+            // Use the stable CI-provided keystore when available; otherwise fall back to
+            // the debug key so a local release build still works. A user-facing release
+            // must be produced by CI with the stable keystore configured.
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
