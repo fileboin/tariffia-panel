@@ -27,7 +27,7 @@ class SshTunnelRulesTest {
     fun keyProfileWithStoredKeyStartsTheTunnel() {
         assertEquals(
             SshTunnelRules.Plan.START_KEY,
-            SshTunnelRules.plan(SshAuthMethod.KEY, hasPrivateKey = true),
+            SshTunnelRules.plan(SshAuthMethod.KEY, hasPrivateKey = true, hasPassword = false),
         )
     }
 
@@ -35,20 +35,28 @@ class SshTunnelRulesTest {
     fun keyProfileWithoutStoredKeyIsRefused() {
         assertEquals(
             SshTunnelRules.Plan.NEEDS_KEY,
-            SshTunnelRules.plan(SshAuthMethod.KEY, hasPrivateKey = false),
+            SshTunnelRules.plan(SshAuthMethod.KEY, hasPrivateKey = false, hasPassword = false),
         )
     }
 
     @Test
-    fun passwordProfileIsNeverUsedForTheTunnel() {
-        // Password auth must not be used/persisted, whether or not a key also exists.
+    fun passwordProfileWithSessionPasswordStartsTheTunnel() {
         assertEquals(
-            SshTunnelRules.Plan.PASSWORD_UNSUPPORTED,
-            SshTunnelRules.plan(SshAuthMethod.PASSWORD, hasPrivateKey = false),
+            SshTunnelRules.Plan.START_PASSWORD,
+            SshTunnelRules.plan(SshAuthMethod.PASSWORD, hasPrivateKey = false, hasPassword = true),
         )
+    }
+
+    @Test
+    fun passwordProfileWithoutSessionPasswordIsRefused() {
         assertEquals(
-            SshTunnelRules.Plan.PASSWORD_UNSUPPORTED,
-            SshTunnelRules.plan(SshAuthMethod.PASSWORD, hasPrivateKey = true),
+            SshTunnelRules.Plan.NEEDS_PASSWORD,
+            SshTunnelRules.plan(SshAuthMethod.PASSWORD, hasPrivateKey = false, hasPassword = false),
+        )
+        // A stored key is irrelevant for a password-mode profile.
+        assertEquals(
+            SshTunnelRules.Plan.NEEDS_PASSWORD,
+            SshTunnelRules.plan(SshAuthMethod.PASSWORD, hasPrivateKey = true, hasPassword = false),
         )
     }
 

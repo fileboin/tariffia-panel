@@ -13,6 +13,7 @@ import com.tariffia.panel.data.ssh.SshProfile
 import com.tariffia.panel.data.ssh.SshProfileRules
 import com.tariffia.panel.data.ssh.SshProfileValidation
 import com.tariffia.panel.data.ssh.SshProfileValidator
+import com.tariffia.panel.data.ssh.SshSessionSecrets
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -153,6 +154,9 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
                         _uiState.update { it.copy(connection = VpsConnectionState.ConnectionFailed("Password required.")) }
                         return@launch
                     }
+                    // Seed the process-local, in-memory-only holder so the Router's Ollama tunnel
+                    // can reuse this password. Never persisted; cleared on Router STOP / process death.
+                    SshSessionSecrets.setPassword(state.passwordInput)
                     SshCredentials.Password(state.passwordInput)
                 }
             }

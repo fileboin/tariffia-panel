@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import com.tariffia.panel.data.ssh.SshSessionSecrets
 import com.tariffia.panel.data.ssh.SshTunnel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,8 +60,10 @@ class RouterService : Service() {
     }
 
     private fun handleStop() {
-        // Close the SSH forward with the Router it serves.
+        // Close the SSH forward with the Router it serves, then drop the session-only SSH
+        // password from memory (it was never persisted).
         SshTunnel.stop()
+        SshSessionSecrets.clear()
         RouterRuntime.markStopped()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
         stopSelf()

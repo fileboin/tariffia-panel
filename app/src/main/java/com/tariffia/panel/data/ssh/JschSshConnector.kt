@@ -140,7 +140,7 @@ class JschSshConnector : SshConnector {
  * Answers JSch password/keyboard-interactive prompts with the session password. The
  * password is held in memory only and is never logged or displayed.
  */
-private class PasswordUserInfo(private val password: String) : UserInfo, UIKeyboardInteractive {
+internal class PasswordUserInfo(private val password: String) : UserInfo, UIKeyboardInteractive {
     override fun getPassword(): String = password
     override fun getPassphrase(): String? = null
     override fun promptPassword(message: String?): Boolean = true
