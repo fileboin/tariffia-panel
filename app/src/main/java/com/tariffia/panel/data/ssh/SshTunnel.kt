@@ -22,18 +22,18 @@ internal object SshTunnelRules {
     const val REMOTE_HOST = "127.0.0.1"
     const val REMOTE_PORT = 11434
 
-    /** What the tunnel can do with the stored profile. */
-    enum class Plan { START_KEY, NEEDS_KEY, PASSWORD_UNSUPPORTED }
+    /** What the tunnel can do with the stored profile plus the session-only password. */
+    enum class Plan { START_KEY, NEEDS_KEY, START_PASSWORD, NEEDS_PASSWORD }
 
     /**
-     * KEY authentication only. A password-mode profile is refused (never stored, never used):
-     * an SSH password is session-only and a long-lived tunnel cannot rely on it.
+     * KEY uses the stored private key; PASSWORD uses the session-only in-memory password
+     * ([SshSessionSecrets]). A missing secret is reported, never invented or persisted.
      */
-    fun plan(authMethod: SshAuthMethod, hasPrivateKey: Boolean): Plan = when {
-        authMethod == SshAuthMethod.PASSWORD -> Plan.PASSWORD_UNSUPPORTED
-        hasPrivateKey -> Plan.START_KEY
-        else -> Plan.NEEDS_KEY
-    }
+    fun plan(authMethod: SshAuthMethod, hasPrivateKey: Boolean, hasPassword: Boolean): Plan =
+        when (authMethod) {
+            SshAuthMethod.KEY -> if (hasPrivateKey) Plan.START_KEY else Plan.NEEDS_KEY
+            SshAuthMethod.PASSWORD -> if (hasPassword) Plan.START_PASSWORD else Plan.NEEDS_PASSWORD
+        }
 }
 
 /**
@@ -44,10 +44,11 @@ internal object SshTunnelRules {
  * `127.0.0.1:11434` on the VPS, so the embedded Router's existing Ollama baseUrl
  * (`http://127.0.0.1:11434/v1`) reaches Ollama without any registry change.
  *
- * Authentication is public-key only. The private key and passphrase come from the existing
- * [SecureSshProfileStore] (Android Keystore); no password is ever persisted or used. Host-key
- * verification reuses the existing [HostKeyVerifier] pinning: an unpinned or changed key makes
- * the session fail rather than silently trusting it.
+ * Authentication is public-key (private key/passphrase from the existing [SecureSshProfileStore],
+ * Android Keystore) OR password. A password-mode profile uses the session-only password held by
+ * [SshSessionSecrets] (in memory only, never persisted, never logged). Host-key verification reuses
+ * the existing [HostKeyVerifier] pinning: an unpinned or changed key makes the session fail rather
+ * than silently trusting it.
  *
  * Unlike the one-shot [JschSshConnector], this keeps ONE [Session] alive for as long as the
  * Router runs and closes it on stop. Failures are reported via [lastError] and never thrown,
@@ -74,7 +75,7 @@ object SshTunnel {
 
     /**
      * Establishes the tunnel if it is not already up. Returns true on success. Never throws:
-     * any failure (no key, password-mode profile, unreachable VPS, unpinned host key, port in
+     * any failure (no key, no session password, unreachable VPS, unpinned host key, port in
      * use) is caught, recorded in [lastError], and reported as false.
      */
     suspend fun start(ctx: Context): Boolean = withContext(Dispatchers.IO) {
@@ -84,43 +85,67 @@ object SshTunnel {
 
             val store = SecureSshProfileStore(ctx)
             val profile = store.loadProfile()
-            when (SshTunnelRules.plan(profile.authMethod, store.hasPrivateKey())) {
-                SshTunnelRules.Plan.PASSWORD_UNSUPPORTED -> {
-                    lastError = "SSH tunnel needs key authentication; password auth is session-only and never stored."
-                    return@withContext false
-                }
+            val plan = SshTunnelRules.plan(
+                profile.authMethod,
+                store.hasPrivateKey(),
+                SshSessionSecrets.hasPassword(),
+            )
+            when (plan) {
                 SshTunnelRules.Plan.NEEDS_KEY -> {
                     lastError = "No SSH private key stored for the tunnel."
                     return@withContext false
                 }
-                SshTunnelRules.Plan.START_KEY -> Unit
-            }
-
-            val pem = store.readPrivateKey()
-            if (pem.isNullOrBlank()) {
-                lastError = "No SSH private key stored for the tunnel."
-                return@withContext false
+                SshTunnelRules.Plan.NEEDS_PASSWORD -> {
+                    lastError = "SSH password not available; open VPS/SSH, enter the password and Test Connection, then start the Router."
+                    return@withContext false
+                }
+                SshTunnelRules.Plan.START_KEY, SshTunnelRules.Plan.START_PASSWORD -> Unit
             }
             if (profile.host.isBlank() || profile.username.isBlank()) {
                 lastError = "SSH profile is incomplete (host/username)."
                 return@withContext false
             }
 
-            val passphrase = store.readPassphrase()?.takeIf { it.isNotEmpty() }
             val pinned = store.getPin(profile.host, profile.port)
 
             val opened: Session? = try {
                 val jsch = JSch()
-                jsch.addIdentity(
-                    IDENTITY_NAME,
-                    pem.toByteArray(Charsets.UTF_8),
-                    null,
-                    passphrase?.toByteArray(Charsets.UTF_8),
-                )
                 val s = jsch.getSession(profile.username, profile.host, profile.port).apply {
                     setConfig("StrictHostKeyChecking", "yes")
-                    setConfig("PreferredAuthentications", "publickey")
                     setHostKeyRepository(PinnedHostKeyRepository(pinned))
+                }
+                when (plan) {
+                    SshTunnelRules.Plan.START_KEY -> {
+                        val pem = store.readPrivateKey()
+                        if (pem.isNullOrBlank()) {
+                            lastError = "No SSH private key stored for the tunnel."
+                            return@withContext false
+                        }
+                        val passphrase = store.readPassphrase()?.takeIf { it.isNotEmpty() }
+                        jsch.addIdentity(
+                            IDENTITY_NAME,
+                            pem.toByteArray(Charsets.UTF_8),
+                            null,
+                            passphrase?.toByteArray(Charsets.UTF_8),
+                        )
+                        s.setConfig("PreferredAuthentications", SshAuthConfig.preferredAuthentications(SshAuthMethod.KEY))
+                    }
+                    SshTunnelRules.Plan.START_PASSWORD -> {
+                        val password = SshSessionSecrets.password()
+                        if (password.isNullOrEmpty()) {
+                            lastError = "SSH password not available; open VPS/SSH, enter the password and Test Connection, then start the Router."
+                            return@withContext false
+                        }
+                        // Same password approach as JschSshConnector: password + keyboard-interactive,
+                        // answered in memory only (never persisted or logged).
+                        s.setConfig("PreferredAuthentications", SshAuthConfig.preferredAuthentications(SshAuthMethod.PASSWORD))
+                        s.setPassword(password)
+                        s.userInfo = PasswordUserInfo(password)
+                    }
+                    else -> {
+                        lastError = "SSH tunnel authentication is not available."
+                        return@withContext false
+                    }
                 }
                 s.connect(CONNECT_TIMEOUT_MS)
                 s.setPortForwardingL(
