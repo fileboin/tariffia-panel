@@ -11,6 +11,7 @@ import com.tariffia.panel.data.providers.ProviderStatus
 import com.tariffia.panel.data.providers.SecureProviderKeyStore
 import com.tariffia.panel.data.router.ModelWithHealth
 import com.tariffia.panel.data.router.RouterClient
+import com.tariffia.panel.data.router.RouterProvider
 import com.tariffia.panel.data.router.RouterResult
 import com.tariffia.panel.data.router.RouterUsage
 import com.tariffia.panel.data.router.modelsForProvider
@@ -32,6 +33,8 @@ data class ProviderDetailsUiState(
     /** Router-reported, read-only usage/cost (null when unavailable or not configured). */
     val usage: RouterUsage? = null,
     val hasStoredKey: Boolean = false,
+    /** Router-reported: this provider needs no credential at all (e.g. a local Ollama). */
+    val keyless: Boolean = false,
     val keyInput: String = "",
     val keyVisible: Boolean = false,
     val isLoading: Boolean = true,
@@ -131,7 +134,13 @@ class ProviderDetailsViewModel(
             is RouterResult.Success -> usageResult.value
             else -> null
         }
-        _uiState.update { it.copy(models = models, usage = usage) }
+        // Best-effort, read-only provider facts: the Router reports `keyless` (no credential
+        // required). A failure must not affect status/key. Unknown/missing -> false.
+        val keyless = when (val facts = client.fetchProviders(url, token)) {
+            is RouterResult.Success -> ProviderDetailsRules.keylessFor(facts.value, providerId)
+            else -> false
+        }
+        _uiState.update { it.copy(models = models, usage = usage, keyless = keyless) }
     }
 
     fun onKeyChange(value: String) {
@@ -220,6 +229,9 @@ class ProviderDetailsViewModel(
      * never logged and never returned.
      */
     private suspend fun pushStoredKeyToRouter(): SyncResult {
+        // Keyless providers take no credential: never reach the transport, and never send an
+        // empty or placeholder key. There is simply nothing to sync.
+        if (!ProviderDetailsRules.shouldPushKey(_uiState.value.keyless)) return SyncResult.NoLocalKey
         val key = withContext(Dispatchers.IO) { keyStore.readKey(providerId) }
             ?: return SyncResult.NoLocalKey
         val snapshot = withContext(Dispatchers.IO) { settings.load() }
@@ -253,6 +265,7 @@ class ProviderDetailsViewModel(
      */
     private suspend fun resyncIfRouterLacksKey() {
         val state = _uiState.value
+        if (state.keyless) return
         if (!state.hasStoredKey) return
         val view = state.routerStatusView
         if (view is RouterStatusView.Available && view.status == ProviderStatus.NOT_CONFIGURED) {
@@ -263,4 +276,23 @@ class ProviderDetailsViewModel(
     companion object {
         const val ARG_PROVIDER_ID = "providerId"
     }
+}
+
+/**
+ * Pure decisions for Provider Details, kept free of Android APIs so they are JVM-testable.
+ * A keyless provider (e.g. a local Ollama) takes no credential, so no key is ever pushed.
+ */
+internal object ProviderDetailsRules {
+
+    /** Router-reported `keyless` flag for [providerId]; unknown/missing -> false. */
+    fun keylessFor(providers: List<RouterProvider>, providerId: String): Boolean {
+        val id = providerId.trim().lowercase()
+        return providers.firstOrNull { it.id.trim().lowercase() == id }?.keyless ?: false
+    }
+
+    /**
+     * Whether a key PUT to the Router should be attempted. Keyless providers must never
+     * reach the transport (no empty and no placeholder key is ever sent).
+     */
+    fun shouldPushKey(keyless: Boolean): Boolean = !keyless
 }
