@@ -8,9 +8,11 @@ sealed interface SshProfileValidation {
 
 /**
  * Pure validation for Save/Test. Trims only safe text (host, username, port); it never
- * touches the private key or passphrase content.
+ * touches the private key, passphrase or password content.
  *
- * @param hasKey true when a key was typed in or one is already stored.
+ * @param secretAvailable true when the secret the selected method needs is available:
+ *   a private key for [SshAuthMethod.KEY], a password for [SshAuthMethod.PASSWORD].
+ *   Saving a password-mode profile does not require the password (it is not persisted).
  */
 object SshProfileValidator {
 
@@ -18,7 +20,8 @@ object SshProfileValidator {
         host: String,
         portText: String,
         username: String,
-        hasKey: Boolean,
+        authMethod: SshAuthMethod = SshAuthMethod.KEY,
+        secretAvailable: Boolean,
     ): SshProfileValidation {
         val normalizedHost = SshProfileRules.normalizeHost(host)
         if (!SshProfileRules.isValidHost(normalizedHost)) {
@@ -35,12 +38,19 @@ object SshProfileValidator {
             return SshProfileValidation.Invalid("Enter a valid username.")
         }
 
-        if (!hasKey) {
-            return SshProfileValidation.Invalid("Paste an SSH private key.")
+        if (!secretAvailable) {
+            return SshProfileValidation.Invalid(
+                if (authMethod == SshAuthMethod.PASSWORD) "Enter the SSH password." else "Paste an SSH private key.",
+            )
         }
 
         return SshProfileValidation.Valid(
-            SshProfile(host = normalizedHost, port = port, username = normalizedUsername),
+            SshProfile(
+                host = normalizedHost,
+                port = port,
+                username = normalizedUsername,
+                authMethod = authMethod,
+            ),
         )
     }
 }

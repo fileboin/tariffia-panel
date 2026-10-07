@@ -1,10 +1,17 @@
 package com.tariffia.panel.data.ssh
 
-/** Non-secret SSH target. The private key and passphrase are stored separately. */
+/** How the SSH session authenticates. */
+enum class SshAuthMethod {
+    KEY,
+    PASSWORD,
+}
+
+/** Non-secret SSH target. The private key, passphrase and password are handled separately. */
 data class SshProfile(
     val host: String = "",
     val port: Int = DEFAULT_PORT,
     val username: String = "",
+    val authMethod: SshAuthMethod = SshAuthMethod.KEY,
 ) {
     companion object {
         const val DEFAULT_PORT = 22

@@ -1,6 +1,7 @@
 package com.tariffia.panel.data.ssh
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Test
 
 /**
@@ -79,5 +80,13 @@ class SshOutcomeMapperTest {
             SshConnectOutcome.HostKeyChanged(pin, identity),
             SshOutcomeMapper.fromFailure("HostKey has been changed: vps.example.com", pin, identity),
         )
+    }
+
+    @Test
+    fun authFailureOutcomeNeverCarriesASecret() {
+        val sentinel = "super-secret-password-sentinel"
+        val outcome = SshOutcomeMapper.fromFailure("Auth fail $sentinel", null, null)
+        assertEquals(SshConnectOutcome.AuthenticationFailed, outcome)
+        assertFalse(outcome.toString().contains(sentinel))
     }
 }

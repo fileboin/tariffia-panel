@@ -32,19 +32,20 @@ class JschSshConnector : SshConnector {
 
     override suspend fun connect(
         profile: SshProfile,
-        privateKeyPem: String,
-        passphrase: String?,
+        credentials: SshCredentials,
         pinned: HostKeyPin?,
     ): SshConnectOutcome = withContext(Dispatchers.IO) {
         val jsch = JSch()
-        try {
-            val keyBytes = privateKeyPem.toByteArray(Charsets.UTF_8)
-            val passphraseBytes = passphrase
-                ?.takeIf { it.isNotEmpty() }
-                ?.toByteArray(Charsets.UTF_8)
-            jsch.addIdentity(IDENTITY_NAME, keyBytes, null, passphraseBytes)
-        } catch (e: JSchException) {
-            return@withContext SshConnectOutcome.Failed("Could not load the SSH private key.")
+        if (credentials is SshCredentials.Key) {
+            try {
+                val keyBytes = credentials.privateKeyPem.toByteArray(Charsets.UTF_8)
+                val passphraseBytes = credentials.passphrase
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.toByteArray(Charsets.UTF_8)
+                jsch.addIdentity(IDENTITY_NAME, keyBytes, null, passphraseBytes)
+            } catch (e: JSchException) {
+                return@withContext SshConnectOutcome.Failed("Could not load the SSH private key.")
+            }
         }
 
         var connecting: Session? = null
@@ -52,7 +53,11 @@ class JschSshConnector : SshConnector {
         try {
             val opened = jsch.getSession(profile.username, profile.host, profile.port).apply {
                 setConfig("StrictHostKeyChecking", "yes")
-                setConfig("PreferredAuthentications", "publickey")
+                // Public-key or password only — never keyboard-interactive prompt handling.
+                setConfig(
+                    "PreferredAuthentications",
+                    if (credentials is SshCredentials.Password) "password" else "publickey",
+                )
                 setHostKeyRepository(object : HostKeyRepository {
                     override fun check(host: String?, key: ByteArray?): Int {
                         if (key == null) return HostKeyRepository.NOT_INCLUDED
@@ -72,6 +77,10 @@ class JschSshConnector : SshConnector {
                     override fun getHostKey(): Array<HostKey> = emptyArray()
                     override fun getHostKey(host: String?, type: String?): Array<HostKey> = emptyArray()
                 })
+            }
+            // Password (if any) is set on the session only; it is never logged.
+            if (credentials is SshCredentials.Password) {
+                opened.setPassword(credentials.password)
             }
             connecting = opened
             opened.connect(CONNECT_TIMEOUT_MS)
