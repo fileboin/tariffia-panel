@@ -1,18 +1,21 @@
 package com.tariffia.panel.data.ssh
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** JVM tests for Save/Test profile validation (host, username, port, key presence). */
+/** JVM tests for Save/Test profile validation (host, username, port, method secret). */
 class SshProfileValidatorTest {
 
     private fun validate(
         host: String = "vps.example.com",
         port: String = "22",
         username: String = "root",
-        hasKey: Boolean = true,
-    ): SshProfileValidation = SshProfileValidator.validate(host, port, username, hasKey)
+        authMethod: SshAuthMethod = SshAuthMethod.KEY,
+        secretAvailable: Boolean = true,
+    ): SshProfileValidation =
+        SshProfileValidator.validate(host, port, username, authMethod, secretAvailable)
 
     @Test
     fun validProfile_returnsTrimmedValues() {
@@ -22,6 +25,7 @@ class SshProfileValidatorTest {
         assertEquals("vps.example.com", profile.host)
         assertEquals(2222, profile.port)
         assertEquals("deploy", profile.username)
+        assertEquals(SshAuthMethod.KEY, profile.authMethod)
     }
 
     @Test
@@ -62,15 +66,53 @@ class SshProfileValidatorTest {
         assertTrue(validate(port = "") is SshProfileValidation.Invalid)
     }
 
+    /* ------------------------------ key method ------------------------------ */
+
     @Test
-    fun blankKeyWithoutStoredKey_isInvalid() {
-        val result = validate(hasKey = false)
+    fun keyModeWithoutKey_isInvalid() {
+        val result = validate(authMethod = SshAuthMethod.KEY, secretAvailable = false)
         assertTrue(result is SshProfileValidation.Invalid)
         assertEquals("Paste an SSH private key.", (result as SshProfileValidation.Invalid).message)
     }
 
     @Test
-    fun blankKeyWithStoredKey_isValid() {
-        assertTrue(validate(hasKey = true) is SshProfileValidation.Valid)
+    fun keyModeWithKey_isValid() {
+        val result = validate(authMethod = SshAuthMethod.KEY, secretAvailable = true)
+        assertTrue(result is SshProfileValidation.Valid)
+        assertEquals(SshAuthMethod.KEY, (result as SshProfileValidation.Valid).profile.authMethod)
+    }
+
+    /* ---------------------------- password method --------------------------- */
+
+    @Test
+    fun passwordModeWithoutSecret_isInvalidWithClearMessage() {
+        val result = validate(authMethod = SshAuthMethod.PASSWORD, secretAvailable = false)
+        assertTrue(result is SshProfileValidation.Invalid)
+        assertEquals("Enter the SSH password.", (result as SshProfileValidation.Invalid).message)
+    }
+
+    @Test
+    fun passwordModeWithSecret_isValid() {
+        val result = validate(authMethod = SshAuthMethod.PASSWORD, secretAvailable = true)
+        assertTrue(result is SshProfileValidation.Valid)
+        assertEquals(SshAuthMethod.PASSWORD, (result as SshProfileValidation.Valid).profile.authMethod)
+    }
+
+    @Test
+    fun passwordModeStillValidatesHostPortUsername() {
+        assertTrue(validate(host = "", authMethod = SshAuthMethod.PASSWORD) is SshProfileValidation.Invalid)
+        assertTrue(validate(port = "0", authMethod = SshAuthMethod.PASSWORD) is SshProfileValidation.Invalid)
+        assertTrue(validate(username = "", authMethod = SshAuthMethod.PASSWORD) is SshProfileValidation.Invalid)
+    }
+
+    @Test
+    fun validationMessagesNeverContainASecret() {
+        // The validator never receives the password/key; messages are fixed strings.
+        val sentinel = "super-secret-sentinel-value"
+        val results = listOf(
+            validate(authMethod = SshAuthMethod.PASSWORD, secretAvailable = false),
+            validate(authMethod = SshAuthMethod.KEY, secretAvailable = false),
+        )
+        results.forEach { assertFalse(it.toString().contains(sentinel)) }
     }
 }

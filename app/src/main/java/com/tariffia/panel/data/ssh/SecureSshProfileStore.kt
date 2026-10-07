@@ -28,7 +28,13 @@ class SecureSshProfileStore(context: Context) {
         host = prefs.getString(KEY_HOST, "").orEmpty(),
         port = prefs.getInt(KEY_PORT, SshProfile.DEFAULT_PORT),
         username = prefs.getString(KEY_USERNAME, "").orEmpty(),
+        authMethod = readAuthMethod(),
     )
+
+    /** The selected auth method (non-secret). The password itself is never persisted. */
+    private fun readAuthMethod(): SshAuthMethod =
+        runCatching { SshAuthMethod.valueOf(prefs.getString(KEY_AUTH_METHOD, null).orEmpty()) }
+            .getOrDefault(SshAuthMethod.KEY)
 
     fun hasPrivateKey(): Boolean = prefs.contains(KEY_PRIVATE_KEY)
 
@@ -43,6 +49,7 @@ class SecureSshProfileStore(context: Context) {
             .putString(KEY_HOST, SshProfileRules.normalizeHost(profile.host))
             .putInt(KEY_PORT, profile.port)
             .putString(KEY_USERNAME, profile.username.trim())
+            .putString(KEY_AUTH_METHOD, profile.authMethod.name)
             .apply()
         if (!privateKeyPem.isNullOrBlank()) {
             prefs.edit().putString(KEY_PRIVATE_KEY, crypto.encrypt(privateKeyPem)).apply()
@@ -98,6 +105,7 @@ class SecureSshProfileStore(context: Context) {
         const val KEY_HOST = "host"
         const val KEY_PORT = "port"
         const val KEY_USERNAME = "username"
+        const val KEY_AUTH_METHOD = "auth_method"
         const val KEY_PRIVATE_KEY = "private_key_enc"
         const val KEY_PASSPHRASE = "passphrase_enc"
         const val KEY_PINS = "host_key_pins_enc"

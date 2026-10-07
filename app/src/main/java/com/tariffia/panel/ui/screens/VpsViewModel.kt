@@ -6,7 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.tariffia.panel.data.ssh.HostKeyPin
 import com.tariffia.panel.data.ssh.JschSshConnector
 import com.tariffia.panel.data.ssh.SecureSshProfileStore
+import com.tariffia.panel.data.ssh.SshAuthMethod
 import com.tariffia.panel.data.ssh.SshConnector
+import com.tariffia.panel.data.ssh.SshCredentials
 import com.tariffia.panel.data.ssh.SshProfile
 import com.tariffia.panel.data.ssh.SshProfileRules
 import com.tariffia.panel.data.ssh.SshProfileValidation
@@ -24,8 +26,11 @@ data class VpsUiState(
     val host: String = "",
     val port: String = SshProfile.DEFAULT_PORT.toString(),
     val username: String = "",
+    val authMethod: SshAuthMethod = SshAuthMethod.KEY,
     val privateKeyInput: String = "",
     val passphraseInput: String = "",
+    /** Session-only; never persisted and never logged. */
+    val passwordInput: String = "",
     val hasStoredKey: Boolean = false,
     val hasStoredPassphrase: Boolean = false,
     val isLoading: Boolean = true,
@@ -57,12 +62,14 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
             val profile = withContext(Dispatchers.IO) { store.loadProfile() }
             val hasKey = withContext(Dispatchers.IO) { store.hasPrivateKey() }
             val hasPassphrase = withContext(Dispatchers.IO) { store.hasPassphrase() }
-            val ready = profile.host.isNotBlank() && profile.username.isNotBlank() && hasKey
+            val ready = profile.host.isNotBlank() && profile.username.isNotBlank() &&
+                (profile.authMethod == SshAuthMethod.PASSWORD || hasKey)
             _uiState.update {
                 it.copy(
                     host = profile.host,
                     port = profile.port.toString(),
                     username = profile.username,
+                    authMethod = profile.authMethod,
                     hasStoredKey = hasKey,
                     hasStoredPassphrase = hasPassphrase,
                     isLoading = false,
@@ -75,8 +82,10 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
     fun onHostChange(value: String) = onEdit { it.copy(host = value) }
     fun onPortChange(value: String) = onEdit { it.copy(port = value) }
     fun onUsernameChange(value: String) = onEdit { it.copy(username = value) }
+    fun onAuthMethodChange(method: SshAuthMethod) = onEdit { it.copy(authMethod = method) }
     fun onPrivateKeyChange(value: String) = onEdit { it.copy(privateKeyInput = value) }
     fun onPassphraseChange(value: String) = onEdit { it.copy(passphraseInput = value) }
+    fun onPasswordChange(value: String) = onEdit { it.copy(passwordInput = value) }
 
     /** Any edit invalidates the previous test result and clears feedback. */
     private fun onEdit(transform: (VpsUiState) -> VpsUiState) {
@@ -87,9 +96,12 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveProfile() {
         val state = _uiState.value
-        val profile = validatedProfile(state) ?: return
+        val keyAvailable = state.privateKeyInput.isNotBlank() || state.hasStoredKey
+        // Saving a password-mode profile does not require the password (it is not persisted).
+        val secretAvailable = state.authMethod != SshAuthMethod.KEY || keyAvailable
+        val profile = validatedProfile(state, secretAvailable) ?: return
         val keyInput = state.privateKeyInput
-        if (keyInput.isNotBlank() && !SshProfileRules.looksLikePrivateKey(keyInput)) {
+        if (state.authMethod == SshAuthMethod.KEY && keyInput.isNotBlank() && !SshProfileRules.looksLikePrivateKey(keyInput)) {
             _uiState.update { it.copy(profileMessage = "That does not look like a private key.") }
             return
         }
@@ -117,20 +129,35 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
         // Ignore a second Test Connection while one is already running.
         if (testJob?.isActive == true) return
         val state = _uiState.value
-        val profile = validatedProfile(state) ?: return
+        val secretAvailable = when (state.authMethod) {
+            SshAuthMethod.KEY -> state.privateKeyInput.isNotBlank() || state.hasStoredKey
+            SshAuthMethod.PASSWORD -> state.passwordInput.isNotEmpty()
+        }
+        val profile = validatedProfile(state, secretAvailable) ?: return
 
         _uiState.update { it.copy(connection = VpsConnectionState.Testing, profileMessage = null) }
         testJob = viewModelScope.launch {
-            val storedKey = withContext(Dispatchers.IO) { store.readPrivateKey() }
-            val storedPassphrase = withContext(Dispatchers.IO) { store.readPassphrase() }
-            val key = state.privateKeyInput.ifBlank { storedKey }
-            if (key.isNullOrBlank()) {
-                _uiState.update { it.copy(connection = VpsConnectionState.ConnectionFailed("Private key required.")) }
-                return@launch
+            val credentials = when (state.authMethod) {
+                SshAuthMethod.KEY -> {
+                    val storedKey = withContext(Dispatchers.IO) { store.readPrivateKey() }
+                    val key = state.privateKeyInput.ifBlank { storedKey }
+                    if (key.isNullOrBlank()) {
+                        _uiState.update { it.copy(connection = VpsConnectionState.ConnectionFailed("Private key required.")) }
+                        return@launch
+                    }
+                    val storedPassphrase = withContext(Dispatchers.IO) { store.readPassphrase() }
+                    SshCredentials.Key(key, state.passphraseInput.ifBlank { storedPassphrase })
+                }
+                SshAuthMethod.PASSWORD -> {
+                    if (state.passwordInput.isEmpty()) {
+                        _uiState.update { it.copy(connection = VpsConnectionState.ConnectionFailed("Password required.")) }
+                        return@launch
+                    }
+                    SshCredentials.Password(state.passwordInput)
+                }
             }
-            val passphrase = state.passphraseInput.ifBlank { storedPassphrase }
             val pinned = withContext(Dispatchers.IO) { store.getPin(profile.host, profile.port) }
-            val outcome = connector.connect(profile, key, passphrase, pinned)
+            val outcome = connector.connect(profile, credentials, pinned)
             _uiState.update { it.copy(connection = VpsConnectionResolver.fromOutcome(outcome)) }
         }
     }
@@ -139,7 +166,7 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
     fun confirmEnrollment() {
         val state = _uiState.value
         val presented = (state.connection as? VpsConnectionState.HostKeyConfirmationRequired)?.presented ?: return
-        val profile = validatedProfile(state) ?: return
+        val profile = validatedProfile(state, secretAvailable = true) ?: return
         viewModelScope.launch {
             withContext(Dispatchers.IO) { store.savePin(HostKeyPin(profile.host, profile.port, presented)) }
             _uiState.update { it.copy(connection = VpsConnectionState.Idle) }
@@ -186,9 +213,14 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private fun validatedProfile(state: VpsUiState): SshProfile? {
-        val hasKey = state.privateKeyInput.isNotBlank() || state.hasStoredKey
-        return when (val validation = SshProfileValidator.validate(state.host, state.port, state.username, hasKey)) {
+    private fun validatedProfile(state: VpsUiState, secretAvailable: Boolean): SshProfile? {
+        return when (val validation = SshProfileValidator.validate(
+            state.host,
+            state.port,
+            state.username,
+            state.authMethod,
+            secretAvailable,
+        )) {
             is SshProfileValidation.Valid -> validation.profile
             is SshProfileValidation.Invalid -> {
                 _uiState.update { it.copy(profileMessage = validation.message) }

@@ -29,8 +29,7 @@ sealed interface SshConnectOutcome {
 interface SshConnector {
     suspend fun connect(
         profile: SshProfile,
-        privateKeyPem: String,
-        passphrase: String?,
+        credentials: SshCredentials,
         pinned: HostKeyPin?,
     ): SshConnectOutcome
 }

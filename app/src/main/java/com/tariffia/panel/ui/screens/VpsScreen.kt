@@ -18,6 +18,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -31,6 +32,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.tariffia.panel.data.ssh.HostKeyIdentity
+import com.tariffia.panel.data.ssh.SshAuthMethod
 
 private val ConnectedColor = Color(0xFF2E7D32)
 private val FailedColor = Color(0xFFC62828)
@@ -85,46 +87,81 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
             modifier = Modifier.fillMaxWidth(),
         )
 
-        OutlinedTextField(
-            value = state.privateKeyInput,
-            onValueChange = viewModel::onPrivateKeyChange,
-            label = { Text("SSH private key") },
-            placeholder = { Text("-----BEGIN OPENSSH PRIVATE KEY-----") },
-            singleLine = false,
-            minLines = 4,
-            maxLines = 8,
-            enabled = fieldsEnabled,
-            supportingText = {
-                Text(
-                    if (state.hasStoredKey) {
-                        "A private key is stored securely. Leave blank to keep it."
-                    } else {
-                        "Paste an OpenSSH/PEM private key. Stored encrypted; never shown again."
-                    },
-                )
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Text(text = "Authentication", style = MaterialTheme.typography.titleSmall)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(
+                selected = state.authMethod == SshAuthMethod.KEY,
+                onClick = { viewModel.onAuthMethodChange(SshAuthMethod.KEY) },
+                enabled = fieldsEnabled,
+            )
+            Text("SSH Key")
+            Spacer(modifier = Modifier.width(16.dp))
+            RadioButton(
+                selected = state.authMethod == SshAuthMethod.PASSWORD,
+                onClick = { viewModel.onAuthMethodChange(SshAuthMethod.PASSWORD) },
+                enabled = fieldsEnabled,
+            )
+            Text("Password")
+        }
 
-        OutlinedTextField(
-            value = state.passphraseInput,
-            onValueChange = viewModel::onPassphraseChange,
-            label = { Text("Passphrase (optional)") },
-            singleLine = true,
-            enabled = fieldsEnabled,
-            visualTransformation = PasswordVisualTransformation(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-            supportingText = {
-                Text(
-                    if (state.hasStoredPassphrase) {
-                        "A passphrase is stored securely. Leave blank to keep it."
-                    } else {
-                        "Only if the private key is encrypted."
+        when (state.authMethod) {
+            SshAuthMethod.KEY -> {
+                OutlinedTextField(
+                    value = state.privateKeyInput,
+                    onValueChange = viewModel::onPrivateKeyChange,
+                    label = { Text("SSH private key") },
+                    placeholder = { Text("-----BEGIN OPENSSH PRIVATE KEY-----") },
+                    singleLine = false,
+                    minLines = 4,
+                    maxLines = 8,
+                    enabled = fieldsEnabled,
+                    supportingText = {
+                        Text(
+                            if (state.hasStoredKey) {
+                                "A private key is stored securely. Leave blank to keep it."
+                            } else {
+                                "Paste an OpenSSH/PEM private key. Stored encrypted; never shown again."
+                            },
+                        )
                     },
+                    modifier = Modifier.fillMaxWidth(),
                 )
-            },
-            modifier = Modifier.fillMaxWidth(),
-        )
+
+                OutlinedTextField(
+                    value = state.passphraseInput,
+                    onValueChange = viewModel::onPassphraseChange,
+                    label = { Text("Passphrase (optional)") },
+                    singleLine = true,
+                    enabled = fieldsEnabled,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    supportingText = {
+                        Text(
+                            if (state.hasStoredPassphrase) {
+                                "A passphrase is stored securely. Leave blank to keep it."
+                            } else {
+                                "Only if the private key is encrypted."
+                            },
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+
+            SshAuthMethod.PASSWORD -> {
+                OutlinedTextField(
+                    value = state.passwordInput,
+                    onValueChange = viewModel::onPasswordChange,
+                    label = { Text("Password") },
+                    singleLine = true,
+                    enabled = fieldsEnabled,
+                    visualTransformation = PasswordVisualTransformation(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    supportingText = { Text("Used for this session only; never stored.") },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
 
         Button(
             onClick = viewModel::saveProfile,
