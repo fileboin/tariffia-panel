@@ -48,36 +48,76 @@ class RouterServiceContractTest {
     }
 
     @Test
-    fun tunnelReturningFalseStillStartsRouter() = runBlocking {
+    fun tunnelReturningFalseStillStartsRouterAndSetsOllamaUnavailable() = runBlocking {
         var routerStarted = false
+        val availability = mutableListOf<Boolean>()
         val tunnelStarted = startRouterAfterTunnel(
             tunnelStart = { false },
-            routerStart = { routerStarted = true },
+            routerStart = { routerStarted = true; true },
+            setOllamaAvailable = { availability += it },
         )
         assertFalse(tunnelStarted)
         assertTrue(routerStarted)
+        assertEquals(listOf(false), availability)
     }
 
     @Test
-    fun tunnelExceptionStillStartsRouter() = runBlocking {
+    fun tunnelExceptionStillStartsRouterAndSetsOllamaUnavailable() = runBlocking {
         var routerStarted = false
+        val availability = mutableListOf<Boolean>()
         val tunnelStarted = startRouterAfterTunnel(
             tunnelStart = { throw IllegalStateException("tunnel failed") },
-            routerStart = { routerStarted = true },
+            routerStart = { routerStarted = true; true },
+            setOllamaAvailable = { availability += it },
         )
         assertFalse(tunnelStarted)
         assertTrue(routerStarted)
+        assertEquals(listOf(false), availability)
     }
 
     @Test
-    fun successfulTunnelStartsRouterAndReturnsSuccess() = runBlocking {
+    fun successfulTunnelStartsRouterAndEnablesOllamaAfterRouterReady() = runBlocking {
         var routerStarted = false
+        val events = mutableListOf<String>()
         val tunnelStarted = startRouterAfterTunnel(
-            tunnelStart = { true },
-            routerStart = { routerStarted = true },
+            tunnelStart = { events += "tunnel"; true },
+            routerStart = { events += "router"; routerStarted = true; true },
+            setOllamaAvailable = { events += "available:$it" },
         )
         assertTrue(tunnelStarted)
         assertTrue(routerStarted)
+        assertEquals(listOf("tunnel", "router", "available:true"), events)
+    }
+
+    @Test
+    fun routerNotReadyKeepsOllamaUnavailable() = runBlocking {
+        val availability = mutableListOf<Boolean>()
+        startRouterAfterTunnel(
+            tunnelStart = { true },
+            routerStart = { false },
+            setOllamaAvailable = { availability += it },
+        )
+        assertEquals(listOf(false), availability)
+    }
+
+    @Test
+    fun stopDisablesOllamaBeforeReleasingTunnel() = runBlocking {
+        val events = mutableListOf<String>()
+        stopTunnelAfterDisablingOllama(
+            setOllamaUnavailable = { events += "available:false" },
+            stopTunnel = { events += "stop-tunnel" },
+        )
+        assertEquals(listOf("available:false", "stop-tunnel"), events)
+    }
+
+    @Test
+    fun stopStillReleasesTunnelIfAvailabilityUpdateThrows() = runBlocking {
+        var tunnelStopped = false
+        stopTunnelAfterDisablingOllama(
+            setOllamaUnavailable = { throw IllegalStateException("Router unavailable") },
+            stopTunnel = { tunnelStopped = true },
+        )
+        assertTrue(tunnelStopped)
     }
 
     @Test

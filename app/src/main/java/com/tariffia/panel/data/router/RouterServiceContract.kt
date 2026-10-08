@@ -46,7 +46,8 @@ object RouterServiceContract {
  */
 internal suspend fun startRouterAfterTunnel(
     tunnelStart: suspend () -> Boolean,
-    routerStart: suspend () -> Unit,
+    routerStart: suspend () -> Boolean,
+    setOllamaAvailable: suspend (Boolean) -> Unit,
 ): Boolean {
     val tunnelStarted = try {
         tunnelStart()
@@ -55,8 +56,40 @@ internal suspend fun startRouterAfterTunnel(
     } catch (_: Exception) {
         false
     }
-    routerStart()
+    val routerReady = routerStart()
+    publishAvailability(setOllamaAvailable, tunnelStarted && routerReady)
     return tunnelStarted
+}
+
+/** Requests Ollama unavailable before releasing its local tunnel during explicit STOP. */
+internal suspend fun stopTunnelAfterDisablingOllama(
+    setOllamaUnavailable: suspend () -> Unit,
+    stopTunnel: () -> Unit,
+) {
+    try {
+        try {
+            setOllamaUnavailable()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Still close the local tunnel if the embedded Router cannot be reached.
+        }
+    } finally {
+        stopTunnel()
+    }
+}
+
+private suspend fun publishAvailability(
+    setOllamaAvailable: suspend (Boolean) -> Unit,
+    available: Boolean,
+) {
+    try {
+        setOllamaAvailable(available)
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (_: Exception) {
+        // Availability signaling is best-effort; the Router defaults to unavailable.
+    }
 }
 
 /**

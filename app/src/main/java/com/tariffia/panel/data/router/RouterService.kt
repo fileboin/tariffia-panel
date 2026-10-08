@@ -55,7 +55,10 @@ class RouterService : Service() {
                 // and must not prevent the Router from starting.
                 val tunnelStarted = startRouterAfterTunnel(
                     tunnelStart = { SshTunnel.start(applicationContext) },
-                    routerStart = { RouterRuntime.bringUp(applicationContext); Unit },
+                    routerStart = { RouterRuntime.bringUp(applicationContext) },
+                    setOllamaAvailable = { available ->
+                        RouterRuntime.setOllamaAvailability(applicationContext, available)
+                    },
                 )
                 if (!tunnelStarted) {
                     RouterRuntime.reportSshTunnelFailure(
@@ -68,15 +71,25 @@ class RouterService : Service() {
     }
 
     private fun handleStop() {
-        // Close the SSH forward with the Router it serves, then drop the session-only SSH
-        // password from memory (it was never persisted).
-        SshTunnel.stop()
-        SshSessionSecrets.clear()
-        RouterRuntime.markStopped()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        // Deterministic stop (no graceful Node shutdown available in-process).
-        android.os.Process.killProcess(android.os.Process.myPid())
+        scope.launch {
+            try {
+                // Tell the embedded Router to fail closed BEFORE releasing the SSH forward.
+                stopTunnelAfterDisablingOllama(
+                    setOllamaUnavailable = {
+                        RouterRuntime.setOllamaAvailability(applicationContext, false)
+                    },
+                    stopTunnel = { SshTunnel.stop() },
+                )
+            } finally {
+                // Drop the session-only SSH password and preserve the existing STOP behavior.
+                SshSessionSecrets.clear()
+                RouterRuntime.markStopped()
+                ServiceCompat.stopForeground(this@RouterService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                // Deterministic stop (no graceful Node shutdown available in-process).
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 
     private fun startForegroundNow() {

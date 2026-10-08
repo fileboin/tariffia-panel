@@ -14,8 +14,8 @@ import java.net.URLEncoder
 /**
  * Minimal HTTP client for the Tariffia Router.
  *
- * Read-only endpoints: `GET /healthz` and `GET /v1/models`. It also writes a single
- * provider key: `PUT /v1/providers/{providerId}/key`, the narrow key-sync route.
+ * Read-only endpoints include `GET /healthz` and `GET /v1/models`. Writes are limited to
+ * provider key sync and the embedded Router's transient Ollama tunnel-availability control.
  *
  * The token is sent as `Authorization: Bearer <token>`. It is never logged, and no
  * failure carries a response body or the key.
@@ -103,6 +103,16 @@ class RouterClient(
         val path = "/v1/providers/${URLEncoder.encode(providerId, "UTF-8")}/key"
         val jsonBody = buildJsonObject { put("key", key) }.toString()
         return write(baseUrl, "PUT", path, token, jsonBody) { RouterResult.Success(Unit) }
+    }
+
+    /** Updates the embedded Router's process-local Ollama tunnel availability. */
+    suspend fun setOllamaAvailability(
+        baseUrl: String,
+        token: String?,
+        available: Boolean,
+    ): RouterResult<Unit> {
+        val jsonBody = buildJsonObject { put("available", available) }.toString()
+        return write(baseUrl, "PUT", PATH_OLLAMA_AVAILABILITY, token, jsonBody) { RouterResult.Success(Unit) }
     }
 
     /**
@@ -195,6 +205,7 @@ class RouterClient(
         const val PATH_PROVIDERS = "/v1/providers"
         const val PATH_USAGE = "/v1/usage"
         const val PATH_CHAT = "/v1/chat/completions"
+        const val PATH_OLLAMA_AVAILABILITY = "/internal/runtime/ollama-availability"
         val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
     }
 }

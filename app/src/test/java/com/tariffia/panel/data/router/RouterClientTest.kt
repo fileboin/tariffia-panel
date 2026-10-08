@@ -192,6 +192,26 @@ class RouterClientTest {
     }
 
     @Test
+    fun setOllamaAvailability_sendsAuthenticatedBooleanControl() = runBlocking {
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        server.enqueue(MockResponse().setResponseCode(200).setBody("""{"ok":true}"""))
+        assertTrue(client.setOllamaAvailability(baseUrl(), "router-token", true) is RouterResult.Success)
+        assertTrue(client.setOllamaAvailability(baseUrl(), "router-token", false) is RouterResult.Success)
+
+        val enabled = server.takeRequest()
+        assertEquals("PUT", enabled.method)
+        assertEquals("/internal/runtime/ollama-availability", enabled.path)
+        assertEquals("Bearer router-token", enabled.getHeader("Authorization"))
+        assertEquals("{\"available\":true}", enabled.body.readUtf8())
+
+        val disabled = server.takeRequest()
+        assertEquals("PUT", disabled.method)
+        assertEquals("/internal/runtime/ollama-availability", disabled.path)
+        assertEquals("Bearer router-token", disabled.getHeader("Authorization"))
+        assertEquals("{\"available\":false}", disabled.body.readUtf8())
+    }
+
+    @Test
     fun fetchProviders_success_returnsProvidersAndAuth() = runBlocking {
         server.enqueue(
             MockResponse().setResponseCode(200)
