@@ -10,10 +10,12 @@ import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.SettingsRules
 import com.tariffia.panel.data.update.InstallOutcome
 import com.tariffia.panel.data.update.InstalledApp
+import com.tariffia.panel.data.update.InstalledAppIdentity
 import com.tariffia.panel.data.update.UpdateChecker
 import com.tariffia.panel.data.update.UpdateInstaller
 import com.tariffia.panel.data.update.UpdateResult
 import com.tariffia.panel.data.update.installedApp
+import com.tariffia.panel.data.update.readInstalledAppIdentity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -47,6 +49,8 @@ data class SettingsUiState(
     val showClearConfirmation: Boolean = false,
     /** Installed app versionName, for the App section. */
     val appVersion: String = "",
+    /** DIAGNOSTIC: installed versionCode and signing certificate SHA-256 (public metadata only). */
+    val appIdentity: InstalledAppIdentity? = null,
     val updateCheck: UpdateCheckState = UpdateCheckState.Idle,
     /** Update install flow. */
     val showInstallConfirmation: Boolean = false,
@@ -69,7 +73,9 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
     val uiState: StateFlow<SettingsUiState> = _uiState.asStateFlow()
 
     init {
-        _uiState.update { it.copy(appVersion = installed.versionName) }
+        _uiState.update {
+            it.copy(appVersion = installed.versionName, appIdentity = readInstalledAppIdentity(application))
+        }
         viewModelScope.launch {
             val settings = withContext(Dispatchers.IO) { store.load() }
             _uiState.update {
