@@ -157,7 +157,15 @@ fun VpsScreen(viewModel: VpsViewModel = viewModel()) {
                     enabled = fieldsEnabled,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    supportingText = { Text("Used for this session only; never stored.") },
+                    supportingText = {
+                        Text(
+                            if (state.hasStoredPassword) {
+                                "Password saved encrypted on this device. Leave blank to reuse it."
+                            } else {
+                                "Used only for VPS SSH. Tap Save Profile to store it encrypted on this device."
+                            },
+                        )
+                    },
                     modifier = Modifier.fillMaxWidth(),
                 )
             }

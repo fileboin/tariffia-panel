@@ -34,6 +34,8 @@ data class VpsUiState(
     val passwordInput: String = "",
     val hasStoredKey: Boolean = false,
     val hasStoredPassphrase: Boolean = false,
+    /** Non-secret presence flag; the stored password itself is never loaded into UI state. */
+    val hasStoredPassword: Boolean = false,
     val isLoading: Boolean = true,
     val connection: VpsConnectionState = VpsConnectionState.NotConfigured,
     val profileMessage: String? = null,
@@ -63,6 +65,7 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
             val profile = withContext(Dispatchers.IO) { store.loadProfile() }
             val hasKey = withContext(Dispatchers.IO) { store.hasPrivateKey() }
             val hasPassphrase = withContext(Dispatchers.IO) { store.hasPassphrase() }
+            val hasPassword = withContext(Dispatchers.IO) { store.hasPassword() }
             val ready = profile.host.isNotBlank() && profile.username.isNotBlank() &&
                 (profile.authMethod == SshAuthMethod.PASSWORD || hasKey)
             _uiState.update {
@@ -73,6 +76,7 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
                     authMethod = profile.authMethod,
                     hasStoredKey = hasKey,
                     hasStoredPassphrase = hasPassphrase,
+                    hasStoredPassword = hasPassword,
                     isLoading = false,
                     connection = if (ready) VpsConnectionState.Idle else VpsConnectionState.NotConfigured,
                 )
@@ -98,7 +102,7 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
     fun saveProfile() {
         val state = _uiState.value
         val keyAvailable = state.privateKeyInput.isNotBlank() || state.hasStoredKey
-        // Saving a password-mode profile does not require the password (it is not persisted).
+        // Saving a password-mode profile does not require re-entering an already stored password.
         val secretAvailable = state.authMethod != SshAuthMethod.KEY || keyAvailable
         val profile = validatedProfile(state, secretAvailable) ?: return
         val keyInput = state.privateKeyInput
@@ -124,6 +128,8 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
                     passphraseInput = "",
                     hasStoredKey = it.hasStoredKey || keyInput.isNotBlank(),
                     hasStoredPassphrase = it.hasStoredPassphrase || state.passphraseInput.isNotEmpty(),
+                    hasStoredPassword = profile.authMethod == SshAuthMethod.PASSWORD &&
+                        (state.hasStoredPassword || state.passwordInput.isNotEmpty()),
                     connection = VpsConnectionState.Idle,
                     profileMessage = "Profile saved.",
                 )
@@ -137,7 +143,7 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
         val state = _uiState.value
         val secretAvailable = when (state.authMethod) {
             SshAuthMethod.KEY -> state.privateKeyInput.isNotBlank() || state.hasStoredKey
-            SshAuthMethod.PASSWORD -> state.passwordInput.isNotEmpty()
+            SshAuthMethod.PASSWORD -> state.passwordInput.isNotEmpty() || state.hasStoredPassword
         }
         val profile = validatedProfile(state, secretAvailable) ?: return
 
@@ -155,14 +161,23 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
                     SshCredentials.Key(key, state.passphraseInput.ifBlank { storedPassphrase })
                 }
                 SshAuthMethod.PASSWORD -> {
-                    if (state.passwordInput.isEmpty()) {
-                        _uiState.update { it.copy(connection = VpsConnectionState.ConnectionFailed("Password required.")) }
+                    val password = passwordForConnection(
+                        passwordInput = state.passwordInput,
+                        hasStoredPassword = state.hasStoredPassword,
+                    ) { withContext(Dispatchers.IO) { store.readPassword() } }
+                    if (password.isNullOrEmpty()) {
+                        _uiState.update {
+                            it.copy(
+                                hasStoredPassword = false,
+                                connection = VpsConnectionState.ConnectionFailed("Password required."),
+                            )
+                        }
                         return@launch
                     }
                     // Seed the process-local, in-memory-only holder so the Router's Ollama tunnel
                     // can reuse this password. Never persisted; cleared on Router STOP / process death.
-                    SshSessionSecrets.setPassword(state.passwordInput)
-                    SshCredentials.Password(state.passwordInput)
+                    SshSessionSecrets.setPassword(password)
+                    SshCredentials.Password(password)
                 }
             }
             val pinned = withContext(Dispatchers.IO) { store.getPin(profile.host, profile.port) }
@@ -237,4 +252,15 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+}
+
+/** Selects typed input first; only decrypts the saved password when the field is blank. */
+internal suspend fun passwordForConnection(
+    passwordInput: String,
+    hasStoredPassword: Boolean,
+    readStoredPassword: suspend () -> String?,
+): String? = when {
+    passwordInput.isNotEmpty() -> passwordInput
+    hasStoredPassword -> readStoredPassword()?.takeIf { it.isNotEmpty() }
+    else -> null
 }
