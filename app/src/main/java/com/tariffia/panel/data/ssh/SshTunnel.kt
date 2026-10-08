@@ -67,6 +67,14 @@ object SshTunnel {
     private const val IDENTITY_NAME = "tariffia-panel"
     private const val CONNECT_TIMEOUT_MS = 15_000
 
+    /**
+     * JSch keepalive: a silently dead network is detected after about
+     * [SERVER_ALIVE_INTERVAL_MS] * [SERVER_ALIVE_COUNT_MAX] and JSch then disconnects the session,
+     * so [isUp] turns false. Keepalive does not change authentication.
+     */
+    private const val SERVER_ALIVE_INTERVAL_MS = 15_000
+    private const val SERVER_ALIVE_COUNT_MAX = 3
+
     /** True while the forwarding session is connected. */
     fun isUp(): Boolean = session?.isConnected == true
 
@@ -118,6 +126,8 @@ object SshTunnel {
                 val s = jsch.getSession(profile.username, profile.host, profile.port).apply {
                     setConfig("StrictHostKeyChecking", "yes")
                     setHostKeyRepository(PinnedHostKeyRepository(pinned))
+                    setServerAliveInterval(SERVER_ALIVE_INTERVAL_MS)
+                    setServerAliveCountMax(SERVER_ALIVE_COUNT_MAX)
                 }
                 when (plan) {
                     SshTunnelRules.Plan.START_KEY -> {
