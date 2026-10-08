@@ -26,6 +26,19 @@ class RouterServiceContractTest {
     }
 
     @Test
+    fun tunnelFailureIsAppendedAsSafeRuntimeNotice() {
+        assertEquals(
+            RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE,
+            RouterServiceContract.appendSshTunnelFailure(null),
+        )
+        assertEquals(
+            "Key sync: 1 synced\n${RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE}",
+            RouterServiceContract.appendSshTunnelFailure("Key sync: 1 synced"),
+        )
+        assertFalse(RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE.contains("password-value"))
+    }
+
+    @Test
     fun shouldStartIsFalseWhileStartingOrReady() {
         assertFalse(RouterStartGuard.shouldStart(RouterRuntime.State.Starting))
         assertFalse(RouterStartGuard.shouldStart(RouterRuntime.State.Ready))

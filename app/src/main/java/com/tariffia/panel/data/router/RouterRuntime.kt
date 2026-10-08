@@ -298,4 +298,9 @@ object RouterRuntime {
         _state.value = State.Stopped
         _syncSummary.value = null
     }
+
+    /** Adds a safe tunnel warning to the existing Home runtime summary without changing state. */
+    fun reportSshTunnelFailure() {
+        _syncSummary.value = RouterServiceContract.appendSshTunnelFailure(_syncSummary.value)
+    }
 }
