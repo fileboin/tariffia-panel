@@ -55,7 +55,12 @@ class RouterService : Service() {
                 // and must not prevent the Router from starting.
                 val tunnelStarted = SshTunnel.start(applicationContext)
                 RouterRuntime.bringUp(applicationContext)
-                if (!tunnelStarted) RouterRuntime.reportSshTunnelFailure()
+                if (!tunnelStarted) {
+                    RouterRuntime.reportSshTunnelFailure(
+                        SshTunnel.lastError(),
+                        SshSessionSecrets.password(),
+                    )
+                }
             }
         }
     }

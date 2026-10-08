@@ -26,16 +26,24 @@ class RouterServiceContractTest {
     }
 
     @Test
-    fun tunnelFailureIsAppendedAsSafeRuntimeNotice() {
+    fun tunnelFailureExposesReasonAndRedactsSessionPassword() {
+        val password = "ssh-password-sentinel"
+        assertEquals(
+            "SSH tunnel failed: Auth fail for [redacted]",
+            RouterServiceContract.appendSshTunnelFailure(null, "Auth fail for $password", password),
+        )
+        assertFalse(
+            RouterServiceContract.appendSshTunnelFailure(null, "Auth fail for $password", password)
+                .contains(password),
+        )
+        assertEquals(
+            "Key sync: 1 synced\nSSH tunnel failed: Connection refused",
+            RouterServiceContract.appendSshTunnelFailure("Key sync: 1 synced", "Connection refused", null),
+        )
         assertEquals(
             RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE,
-            RouterServiceContract.appendSshTunnelFailure(null),
+            RouterServiceContract.appendSshTunnelFailure(null, null, null),
         )
-        assertEquals(
-            "Key sync: 1 synced\n${RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE}",
-            RouterServiceContract.appendSshTunnelFailure("Key sync: 1 synced"),
-        )
-        assertFalse(RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE.contains("password-value"))
     }
 
     @Test

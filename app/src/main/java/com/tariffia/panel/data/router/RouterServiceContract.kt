@@ -17,13 +17,24 @@ object RouterServiceContract {
         else -> Command.NONE
     }
 
-    /** Fixed, non-secret warning appended to the Home screen's existing runtime summary. */
+    /** Fixed fallback if the tunnel supplied no usable failure reason. */
     const val SSH_TUNNEL_FAILURE_NOTICE =
         "SSH tunnel unavailable. Check the VPS SSH profile, password/key, and pinned host key."
 
-    fun appendSshTunnelFailure(summary: String?): String =
-        listOfNotNull(summary?.takeIf { it.isNotBlank() }, SSH_TUNNEL_FAILURE_NOTICE)
-            .joinToString("\n")
+    /** Keeps the actual tunnel reason while redacting the current session password. */
+    fun appendSshTunnelFailure(summary: String?, error: String?, password: String?): String {
+        val safeError = error
+            ?.takeIf { it.isNotBlank() }
+            ?.let { message ->
+                val redacted = password?.takeIf { it.isNotEmpty() }
+                    ?.let { message.replace(it, "[redacted]") }
+                    ?: message
+                redacted.replace(Regex("[\\r\\n\\t]+"), " ").trim().take(160)
+            }
+            ?.takeIf { it.isNotBlank() }
+        val notice = safeError?.let { "SSH tunnel failed: $it" } ?: SSH_TUNNEL_FAILURE_NOTICE
+        return listOfNotNull(summary?.takeIf { it.isNotBlank() }, notice).joinToString("\n")
+    }
 }
 
 /**
