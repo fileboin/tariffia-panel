@@ -2,12 +2,17 @@ package com.tariffia.panel.data.update
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageInfo
+import android.content.pm.PackageManager
+import android.content.pm.Signature
+import android.os.Build
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
+import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 
 /** Outcome of launching the Android package installer. */
@@ -19,6 +24,47 @@ sealed interface InstallOutcome {
     data object PermissionRequired : InstallOutcome
 
     data class Failed(val message: String) : InstallOutcome
+}
+
+/** Identity of an APK or an installed package, as needed for pre-install validation. */
+internal data class PackageIdentity(
+    val packageName: String?,
+    val versionCode: Long,
+    /** SHA-256 hex digests of the signing certificates. */
+    val signingCertSha256: Set<String>,
+)
+
+/** Result of [InstallValidation.check]. */
+internal sealed interface InstallCheck {
+    data object Allowed : InstallCheck
+
+    data class Rejected(val message: String) : InstallCheck
+}
+
+/** Pure, JVM-testable rules that decide whether an update APK may be handed to the installer. */
+internal object InstallValidation {
+    const val EXPECTED_PACKAGE = "com.tariffia.panel"
+    const val SIGNATURE_MISMATCH_MESSAGE =
+        "This update is signed with a different key and cannot replace the installed app."
+    const val UNREADABLE_SIGNATURE_MESSAGE = "Could not verify the update's signing certificate."
+    const val WRONG_PACKAGE_MESSAGE = "This file is not a Tariffia Panel update."
+    const val NOT_NEWER_MESSAGE = "This update is not newer than the installed version."
+
+    /**
+     * Order: package, then signing certificate (readable and equal to the installed one), then
+     * versionCode (strictly greater than the installed one).
+     */
+    fun check(archive: PackageIdentity, installed: PackageIdentity): InstallCheck {
+        if (archive.packageName != EXPECTED_PACKAGE) return InstallCheck.Rejected(WRONG_PACKAGE_MESSAGE)
+        if (archive.signingCertSha256.isEmpty() || installed.signingCertSha256.isEmpty()) {
+            return InstallCheck.Rejected(UNREADABLE_SIGNATURE_MESSAGE)
+        }
+        if (archive.signingCertSha256 != installed.signingCertSha256) {
+            return InstallCheck.Rejected(SIGNATURE_MISMATCH_MESSAGE)
+        }
+        if (archive.versionCode <= installed.versionCode) return InstallCheck.Rejected(NOT_NEWER_MESSAGE)
+        return InstallCheck.Allowed
+    }
 }
 
 /**
@@ -71,6 +117,9 @@ class UpdateInstaller(
         if (!context.packageManager.canRequestPackageInstalls()) {
             return InstallOutcome.PermissionRequired
         }
+        // Validate before the installer opens, so a rejected update is never reported as launched.
+        val check = validate(context, apkFile)
+        if (check is InstallCheck.Rejected) return InstallOutcome.Failed(check.message)
         return try {
             val uri = FileProvider.getUriForFile(
                 context,
@@ -87,6 +136,53 @@ class UpdateInstaller(
             InstallOutcome.Failed(e.message ?: "Could not start the installer.")
         }
     }
+
+    private fun validate(context: Context, apkFile: File): InstallCheck {
+        val pm = context.packageManager
+        val archive = readIdentity(pm, apkFile.absolutePath)
+            ?: return InstallCheck.Rejected("The downloaded update could not be read.")
+        val installed = try {
+            identityOf(pm.getPackageInfo(context.packageName, signatureFlags()))
+        } catch (_: Exception) {
+            return InstallCheck.Rejected("The installed app could not be read.")
+        }
+        return InstallValidation.check(archive, installed)
+    }
+
+    private fun readIdentity(pm: PackageManager, path: String): PackageIdentity? =
+        pm.getPackageArchiveInfo(path, signatureFlags())?.let { identityOf(it) }
+
+    private fun identityOf(info: PackageInfo): PackageIdentity =
+        PackageIdentity(
+            packageName = info.packageName,
+            versionCode = versionCodeOf(info),
+            signingCertSha256 = signingDigests(info),
+        )
+
+    @Suppress("DEPRECATION")
+    private fun versionCodeOf(info: PackageInfo): Long =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) info.longVersionCode else info.versionCode.toLong()
+
+    @Suppress("DEPRECATION")
+    private fun signatureFlags(): Int =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            PackageManager.GET_SIGNATURES
+        }
+
+    @Suppress("DEPRECATION")
+    private fun signingDigests(info: PackageInfo): Set<String> {
+        val signers: Array<Signature>? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            info.signatures
+        }
+        return signers.orEmpty().map { sha256Hex(it.toByteArray()) }.toSet()
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 
     companion object {
         private const val UPDATES_DIR = "updates"
