@@ -10,7 +10,7 @@ import kotlinx.serialization.json.Json
  * Persists the SSH profile.
  *
  * - Host/port/username are non-secret and stored in plain SharedPreferences.
- * - The private key, the passphrase and the pinned host keys are encrypted with
+ * - The private key, the passphrase, the SSH password and the pinned host keys are encrypted with
  *   [KeystoreCrypto] (AES/GCM key in the Android Keystore). Nothing secret is ever
  *   written in plain text or logged.
  * - The private key is never read back into the UI; [readPrivateKey] is only for the
@@ -21,6 +21,12 @@ class SecureSshProfileStore(context: Context) {
     private val prefs: SharedPreferences =
         context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val crypto = KeystoreCrypto(KEY_ALIAS)
+    private val passwordStorage = EncryptedSshPasswordStorage(
+        cipher = crypto,
+        readCiphertext = { prefs.getString(KEY_PASSWORD, null) },
+        writeCiphertext = { prefs.edit().putString(KEY_PASSWORD, it).apply() },
+        removeCiphertext = { prefs.edit().remove(KEY_PASSWORD).apply() },
+    )
     private val json = Json { ignoreUnknownKeys = true }
     private val pinsSerializer = ListSerializer(HostKeyPin.serializer())
 
@@ -31,7 +37,7 @@ class SecureSshProfileStore(context: Context) {
         authMethod = readAuthMethod(),
     )
 
-    /** The selected auth method (non-secret). The password itself is never persisted. */
+    /** The selected auth method is non-secret. */
     private fun readAuthMethod(): SshAuthMethod =
         runCatching { SshAuthMethod.valueOf(prefs.getString(KEY_AUTH_METHOD, null).orEmpty()) }
             .getOrDefault(SshAuthMethod.KEY)
@@ -41,10 +47,16 @@ class SecureSshProfileStore(context: Context) {
     fun hasPassphrase(): Boolean = prefs.contains(KEY_PASSPHRASE)
 
     /**
-     * Saves the profile. A non-blank [privateKeyPem] replaces the stored key; a blank
-     * one leaves it untouched. The same applies to [passphrase].
+     * Saves the profile. Non-blank key/passphrase/password values replace their encrypted
+     * values; blank values leave them untouched. Switching away from PASSWORD clears its
+     * encrypted password.
      */
-    fun saveProfile(profile: SshProfile, privateKeyPem: String?, passphrase: String?) {
+    fun saveProfile(
+        profile: SshProfile,
+        privateKeyPem: String?,
+        passphrase: String?,
+        password: String? = null,
+    ) {
         prefs.edit()
             .putString(KEY_HOST, SshProfileRules.normalizeHost(profile.host))
             .putInt(KEY_PORT, profile.port)
@@ -57,11 +69,19 @@ class SecureSshProfileStore(context: Context) {
         if (!passphrase.isNullOrEmpty()) {
             prefs.edit().putString(KEY_PASSPHRASE, crypto.encrypt(passphrase)).apply()
         }
+        if (profile.authMethod == SshAuthMethod.PASSWORD) {
+            passwordStorage.save(password)
+        } else {
+            passwordStorage.clear()
+        }
     }
 
     fun readPrivateKey(): String? = readEncrypted(KEY_PRIVATE_KEY)
 
     fun readPassphrase(): String? = readEncrypted(KEY_PASSPHRASE)
+
+    /** Decrypts the session password for SSH authentication; never expose or log the result. */
+    fun readPassword(): String? = passwordStorage.read()
 
     fun getPin(host: String, port: Int): HostKeyPin? =
         readPins().firstOrNull { it.host == host && it.port == port }
@@ -108,6 +128,31 @@ class SecureSshProfileStore(context: Context) {
         const val KEY_AUTH_METHOD = "auth_method"
         const val KEY_PRIVATE_KEY = "private_key_enc"
         const val KEY_PASSPHRASE = "passphrase_enc"
+        const val KEY_PASSWORD = "password_enc"
         const val KEY_PINS = "host_key_pins_enc"
     }
+}
+
+/** Small injectable seam so encrypted SSH password persistence can be JVM-tested. */
+internal class EncryptedSshPasswordStorage(
+    private val cipher: com.tariffia.panel.data.SecretCipher,
+    private val readCiphertext: () -> String?,
+    private val writeCiphertext: (String) -> Unit,
+    private val removeCiphertext: () -> Unit,
+) {
+    fun save(password: String?) {
+        if (!password.isNullOrEmpty()) writeCiphertext(cipher.encrypt(password))
+    }
+
+    fun read(): String? {
+        val ciphertext = readCiphertext() ?: return null
+        return try {
+            cipher.decrypt(ciphertext)
+        } catch (ignored: Exception) {
+            removeCiphertext()
+            null
+        }
+    }
+
+    fun clear() = removeCiphertext()
 }

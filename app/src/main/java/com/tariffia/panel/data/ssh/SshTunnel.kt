@@ -85,6 +85,11 @@ object SshTunnel {
 
             val store = SecureSshProfileStore(ctx)
             val profile = store.loadProfile()
+            if (profile.authMethod == SshAuthMethod.PASSWORD && !SshSessionSecrets.hasPassword()) {
+                // Restore only from the encrypted SSH profile store. Invalid/missing ciphertext
+                // safely yields null, leaving the normal NEEDS_PASSWORD path below.
+                SshSessionSecrets.setPassword(store.readPassword())
+            }
             val plan = SshTunnelRules.plan(
                 profile.authMethod,
                 store.hasPrivateKey(),

@@ -108,7 +108,12 @@ class VpsViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             withContext(Dispatchers.IO) {
-                store.saveProfile(profile, keyInput.ifBlank { null }, state.passphraseInput)
+                store.saveProfile(
+                    profile,
+                    keyInput.ifBlank { null },
+                    state.passphraseInput,
+                    password = state.passwordInput.takeIf { state.authMethod == SshAuthMethod.PASSWORD },
+                )
             }
             _uiState.update {
                 it.copy(
