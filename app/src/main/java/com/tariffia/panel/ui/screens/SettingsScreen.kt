@@ -123,6 +123,18 @@ fun SettingsScreen(viewModel: SettingsViewModel = viewModel()) {
 
         Text(text = "App", style = MaterialTheme.typography.titleMedium)
         Text(text = "Version ${state.appVersion}", style = MaterialTheme.typography.bodyLarge)
+        // DIAGNOSTIC ONLY (update compatibility): public version and signing-certificate digest.
+        val identity = state.appIdentity
+        Text(
+            text = "Diagnostic: " + if (identity == null) {
+                "app identity unavailable"
+            } else {
+                "versionName ${identity.versionName}, versionCode ${identity.versionCode}, " +
+                    "signing SHA-256 ${identity.signingCertSha256.joinToString(", ").ifEmpty { "unavailable" }}"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.outline,
+        )
         OutlinedButton(
             onClick = viewModel::checkForUpdates,
             enabled = state.updateCheck != UpdateCheckState.Checking,
