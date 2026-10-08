@@ -53,8 +53,10 @@ class RouterService : Service() {
                 // BEFORE the Router is expected to serve, so its existing Ollama baseUrl is
                 // reachable. Best-effort: a tunnel failure is recorded in SshTunnel.lastError()
                 // and must not prevent the Router from starting.
-                val tunnelStarted = SshTunnel.start(applicationContext)
-                RouterRuntime.bringUp(applicationContext)
+                val tunnelStarted = startRouterAfterTunnel(
+                    tunnelStart = { SshTunnel.start(applicationContext) },
+                    routerStart = { RouterRuntime.bringUp(applicationContext); Unit },
+                )
                 if (!tunnelStarted) {
                     RouterRuntime.reportSshTunnelFailure(
                         SshTunnel.lastError(),

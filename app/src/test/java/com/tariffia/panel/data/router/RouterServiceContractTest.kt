@@ -1,5 +1,6 @@
 package com.tariffia.panel.data.router
 
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -44,6 +45,39 @@ class RouterServiceContractTest {
             RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE,
             RouterServiceContract.appendSshTunnelFailure(null, null, null),
         )
+    }
+
+    @Test
+    fun tunnelReturningFalseStillStartsRouter() = runBlocking {
+        var routerStarted = false
+        val tunnelStarted = startRouterAfterTunnel(
+            tunnelStart = { false },
+            routerStart = { routerStarted = true },
+        )
+        assertFalse(tunnelStarted)
+        assertTrue(routerStarted)
+    }
+
+    @Test
+    fun tunnelExceptionStillStartsRouter() = runBlocking {
+        var routerStarted = false
+        val tunnelStarted = startRouterAfterTunnel(
+            tunnelStart = { throw IllegalStateException("tunnel failed") },
+            routerStart = { routerStarted = true },
+        )
+        assertFalse(tunnelStarted)
+        assertTrue(routerStarted)
+    }
+
+    @Test
+    fun successfulTunnelStartsRouterAndReturnsSuccess() = runBlocking {
+        var routerStarted = false
+        val tunnelStarted = startRouterAfterTunnel(
+            tunnelStart = { true },
+            routerStart = { routerStarted = true },
+        )
+        assertTrue(tunnelStarted)
+        assertTrue(routerStarted)
     }
 
     @Test
