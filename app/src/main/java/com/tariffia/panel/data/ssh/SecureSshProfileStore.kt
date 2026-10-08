@@ -26,6 +26,7 @@ class SecureSshProfileStore(context: Context) {
         readCiphertext = { prefs.getString(KEY_PASSWORD, null) },
         writeCiphertext = { prefs.edit().putString(KEY_PASSWORD, it).apply() },
         removeCiphertext = { prefs.edit().remove(KEY_PASSWORD).apply() },
+        hasCiphertext = { prefs.contains(KEY_PASSWORD) },
     )
     private val json = Json { ignoreUnknownKeys = true }
     private val pinsSerializer = ListSerializer(HostKeyPin.serializer())
@@ -83,6 +84,9 @@ class SecureSshProfileStore(context: Context) {
     /** Decrypts the session password for SSH authentication; never expose or log the result. */
     fun readPassword(): String? = passwordStorage.read()
 
+    /** Non-secret presence check; does not decrypt or expose the password. */
+    fun hasPassword(): Boolean = passwordStorage.hasPassword()
+
     fun getPin(host: String, port: Int): HostKeyPin? =
         readPins().firstOrNull { it.host == host && it.port == port }
 
@@ -139,7 +143,10 @@ internal class EncryptedSshPasswordStorage(
     private val readCiphertext: () -> String?,
     private val writeCiphertext: (String) -> Unit,
     private val removeCiphertext: () -> Unit,
+    private val hasCiphertext: () -> Boolean,
 ) {
+    fun hasPassword(): Boolean = hasCiphertext()
+
     fun save(password: String?) {
         if (!password.isNullOrEmpty()) writeCiphertext(cipher.encrypt(password))
     }
