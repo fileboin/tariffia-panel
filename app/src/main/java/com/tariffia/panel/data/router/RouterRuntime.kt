@@ -13,6 +13,8 @@ import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 
+internal const val ROUTER_BUNDLE_MARKER = ".bundle-version"
+
 /**
  * Hosts the embedded Node 24 runtime and starts the existing Tariffia Router
  * `serve` CLI inside the Panel process (one Node instance, one Router process).
@@ -35,6 +37,7 @@ object RouterRuntime {
     private const val ROUTER_DIR_NAME = "router"
     private const val DIST_ZIP_ASSET = "router-dist.zip"
     private const val LAUNCHER_ASSET = "router-launcher.mjs"
+    private const val ROUTER_BUNDLE_VERSION = "d5662d4e7a8f85341178f9a5e44322a336943149"
 
     private const val HEALTH_TIMEOUT_MS = 20_000L
     private const val HEALTH_POLL_INTERVAL_MS = 500L
@@ -117,21 +120,17 @@ object RouterRuntime {
         return resolved
     }
 
-    /** Extracts the unmodified Router bundle (dist/ + registry/) on first use. */
+    /** Extracts or updates only the Router bundle directory while no Router is running. */
     private fun ensureRuntime(ctx: Context): File {
         val root = routerDir(ctx)
-        // Marker is a file that only exists in the current bundled Router (PR-D adds
-        // usage.js), so an existing install re-extracts the new dist exactly once.
-        val marker = File(root, "dist/src/core/usage.js")
-        if (!marker.exists()) {
-            root.mkdirs()
+        ensureVersionedRouterBundle(root, ROUTER_BUNDLE_VERSION) { targetRoot ->
             ctx.assets.open(DIST_ZIP_ASSET).use { input ->
                 ZipInputStream(input).use { zip ->
                     var entry = zip.nextEntry
                     while (entry != null) {
-                        val out = File(root, entry.name)
-                        // Defensive: keep every extracted path inside root.
-                        if (!out.canonicalPath.startsWith(root.canonicalPath + File.separator)) {
+                        val out = File(targetRoot, entry.name)
+                        // Defensive: keep every extracted path inside the Router directory.
+                        if (!out.canonicalPath.startsWith(targetRoot.canonicalPath + File.separator)) {
                             throw SecurityException("zip entry escapes root: ${entry.name}")
                         }
                         if (entry.isDirectory) {
@@ -143,6 +142,11 @@ object RouterRuntime {
                         zip.closeEntry()
                         entry = zip.nextEntry
                     }
+                }
+            }
+            File(targetRoot, LAUNCHER_ASSET).let { launcher ->
+                ctx.assets.open(LAUNCHER_ASSET).use { input ->
+                    FileOutputStream(launcher).use { fos -> input.copyTo(fos) }
                 }
             }
         }
@@ -306,5 +310,34 @@ object RouterRuntime {
             error,
             sessionPassword,
         )
+    }
+}
+
+/**
+ * Installs [version] under [root]. Only that directory is replaced. The version marker is
+ * written last, so a failed extraction cannot make a partial bundle appear current.
+ */
+internal fun ensureVersionedRouterBundle(
+    root: File,
+    version: String,
+    extract: (File) -> Unit,
+) {
+    val marker = File(root, ROUTER_BUNDLE_MARKER)
+    val installedVersion = runCatching { marker.takeIf { it.isFile }?.readText()?.trim() }.getOrNull()
+    if (installedVersion == version) return
+
+    if (root.exists() && !root.deleteRecursively()) {
+        throw java.io.IOException("could not replace embedded Router directory")
+    }
+    if (!root.mkdirs() && !root.isDirectory) {
+        throw java.io.IOException("could not create embedded Router directory")
+    }
+
+    try {
+        extract(root)
+        File(root, ROUTER_BUNDLE_MARKER).writeText(version)
+    } catch (e: Exception) {
+        root.deleteRecursively()
+        throw e
     }
 }
