@@ -16,6 +16,25 @@ object RouterServiceContract {
         ACTION_STOP -> Command.STOP
         else -> Command.NONE
     }
+
+    /** Fixed fallback if the tunnel supplied no usable failure reason. */
+    const val SSH_TUNNEL_FAILURE_NOTICE =
+        "SSH tunnel unavailable. Check the VPS SSH profile, password/key, and pinned host key."
+
+    /** Keeps the actual tunnel reason while redacting the current session password. */
+    fun appendSshTunnelFailure(summary: String?, error: String?, password: String?): String {
+        val safeError = error
+            ?.takeIf { it.isNotBlank() }
+            ?.let { message ->
+                val redacted = password?.takeIf { it.isNotEmpty() }
+                    ?.let { message.replace(it, "[redacted]") }
+                    ?: message
+                redacted.replace(Regex("[\\r\\n\\t]+"), " ").trim().take(160)
+            }
+            ?.takeIf { it.isNotBlank() }
+        val notice = safeError?.let { "SSH tunnel failed: $it" } ?: SSH_TUNNEL_FAILURE_NOTICE
+        return listOfNotNull(summary?.takeIf { it.isNotBlank() }, notice).joinToString("\n")
+    }
 }
 
 /**

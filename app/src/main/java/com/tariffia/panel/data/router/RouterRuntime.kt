@@ -298,4 +298,13 @@ object RouterRuntime {
         _state.value = State.Stopped
         _syncSummary.value = null
     }
+
+    /** Adds a sanitized tunnel failure to the existing Home runtime summary without changing state. */
+    fun reportSshTunnelFailure(error: String?, sessionPassword: String?) {
+        _syncSummary.value = RouterServiceContract.appendSshTunnelFailure(
+            _syncSummary.value,
+            error,
+            sessionPassword,
+        )
+    }
 }

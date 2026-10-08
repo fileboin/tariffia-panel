@@ -26,6 +26,27 @@ class RouterServiceContractTest {
     }
 
     @Test
+    fun tunnelFailureExposesReasonAndRedactsSessionPassword() {
+        val password = "ssh-password-sentinel"
+        assertEquals(
+            "SSH tunnel failed: Auth fail for [redacted]",
+            RouterServiceContract.appendSshTunnelFailure(null, "Auth fail for $password", password),
+        )
+        assertFalse(
+            RouterServiceContract.appendSshTunnelFailure(null, "Auth fail for $password", password)
+                .contains(password),
+        )
+        assertEquals(
+            "Key sync: 1 synced\nSSH tunnel failed: Connection refused",
+            RouterServiceContract.appendSshTunnelFailure("Key sync: 1 synced", "Connection refused", null),
+        )
+        assertEquals(
+            RouterServiceContract.SSH_TUNNEL_FAILURE_NOTICE,
+            RouterServiceContract.appendSshTunnelFailure(null, null, null),
+        )
+    }
+
+    @Test
     fun shouldStartIsFalseWhileStartingOrReady() {
         assertFalse(RouterStartGuard.shouldStart(RouterRuntime.State.Starting))
         assertFalse(RouterStartGuard.shouldStart(RouterRuntime.State.Ready))
