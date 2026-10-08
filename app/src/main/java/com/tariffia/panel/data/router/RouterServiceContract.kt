@@ -16,6 +16,14 @@ object RouterServiceContract {
         ACTION_STOP -> Command.STOP
         else -> Command.NONE
     }
+
+    /** Fixed, non-secret warning appended to the Home screen's existing runtime summary. */
+    const val SSH_TUNNEL_FAILURE_NOTICE =
+        "SSH tunnel unavailable. Check the VPS SSH profile, password/key, and pinned host key."
+
+    fun appendSshTunnelFailure(summary: String?): String =
+        listOfNotNull(summary?.takeIf { it.isNotBlank() }, SSH_TUNNEL_FAILURE_NOTICE)
+            .joinToString("\n")
 }
 
 /**
