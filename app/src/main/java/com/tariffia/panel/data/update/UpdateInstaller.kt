@@ -60,7 +60,15 @@ class UpdateInstaller(
                         target.outputStream().use { output -> input.copyTo(output) }
                     }
                 }
-                if (target.length() == 0L) null else target
+                val parses = runCatching {
+                    context.packageManager.getPackageArchiveInfo(target.absolutePath, 0) != null
+                }.getOrDefault(false)
+                if (!acceptDownloadedApk(target.length(), parses)) {
+                    target.delete()
+                    null
+                } else {
+                    target
+                }
             } catch (e: Exception) {
                 target.delete()
                 null
@@ -104,3 +112,11 @@ class UpdateInstaller(
         }
     }
 }
+
+/**
+ * Pure download-acceptance rule: a downloaded file is usable only if it is non-empty and
+ * [parses] as an Android package (the parse result comes from PackageManager). Kept pure so
+ * it is JVM-testable without Robolectric.
+ */
+internal fun acceptDownloadedApk(bytesOnDisk: Long, parses: Boolean): Boolean =
+    bytesOnDisk > 0L && parses
