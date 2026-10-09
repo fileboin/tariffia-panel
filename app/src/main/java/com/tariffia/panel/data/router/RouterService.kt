@@ -33,6 +33,20 @@ class RouterService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** Single writer of Ollama availability to the embedded Router (deduplicated). */
+    private val ollamaPublisher = OllamaAvailabilityPublisher { available ->
+        check(RouterRuntime.setOllamaAvailability(applicationContext, available)) {
+            "Ollama availability update was not accepted by the Router."
+        }
+    }
+
+    /** Marks Ollama unavailable if the established SSH tunnel is lost while Router runs. */
+    private val ollamaTunnelWatch = OllamaTunnelWatch(
+        scope = scope,
+        isTunnelUp = { SshTunnel.isUp() },
+        publisher = ollamaPublisher,
+    )
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -56,11 +70,12 @@ class RouterService : Service() {
                 val tunnelStarted = startRouterAfterTunnel(
                     tunnelStart = { SshTunnel.start(applicationContext) },
                     routerStart = { RouterRuntime.bringUp(applicationContext) },
-                    setOllamaAvailable = { available ->
-                        RouterRuntime.setOllamaAvailability(applicationContext, available)
-                    },
+                    setOllamaAvailable = { available -> ollamaPublisher.publish(available) },
                 )
-                if (!tunnelStarted) {
+                if (tunnelStarted) {
+                    // Only an established tunnel is watched; a failed start is reported below.
+                    ollamaTunnelWatch.start()
+                } else {
                     RouterRuntime.reportSshTunnelFailure(
                         SshTunnel.lastError(),
                         SshSessionSecrets.password(),
@@ -71,13 +86,14 @@ class RouterService : Service() {
     }
 
     private fun handleStop() {
+        // Stop watching before the explicit STOP so a late tunnel drop cannot race it.
+        ollamaTunnelWatch.stop()
         scope.launch {
             try {
                 // Tell the embedded Router to fail closed BEFORE releasing the SSH forward.
+                // Skipped when the loss watcher already reported unavailable (publisher dedup).
                 stopTunnelAfterDisablingOllama(
-                    setOllamaUnavailable = {
-                        RouterRuntime.setOllamaAvailability(applicationContext, false)
-                    },
+                    setOllamaUnavailable = { ollamaPublisher.publish(false) },
                     stopTunnel = { SshTunnel.stop() },
                 )
             } finally {
@@ -128,6 +144,7 @@ class RouterService : Service() {
             .build()
 
     override fun onDestroy() {
+        ollamaTunnelWatch.stop()
         scope.cancel()
         super.onDestroy()
     }

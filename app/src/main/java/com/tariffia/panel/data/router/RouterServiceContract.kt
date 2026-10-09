@@ -1,6 +1,12 @@
 package com.tariffia.panel.data.router
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * Pure, JVM-testable pieces of the foreground-service contract: action parsing,
@@ -89,6 +95,75 @@ private suspend fun publishAvailability(
         throw cancelled
     } catch (_: Exception) {
         // Availability signaling is best-effort; the Router defaults to unavailable.
+    }
+}
+
+/**
+ * Sends Ollama availability to the embedded Router only when it changes. A value is recorded
+ * only after a successful send, so a failed update is retried by the next caller. Calls are
+ * serialized so the tunnel watcher and an explicit STOP cannot interleave.
+ */
+internal class OllamaAvailabilityPublisher(
+    private val send: suspend (Boolean) -> Unit,
+) {
+    private val mutex = Mutex()
+    private var lastSent: Boolean? = null
+
+    /** Returns true when the Router already reflects [available] or the send succeeded. */
+    suspend fun publish(available: Boolean): Boolean = mutex.withLock {
+        if (lastSent == available) return@withLock true
+        try {
+            send(available)
+            lastSent = available
+            true
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            false
+        }
+    }
+}
+
+/**
+ * Watches an ESTABLISHED SSH tunnel while the Router runs. When [isTunnelUp] reports the
+ * session is gone, Ollama is marked unavailable once and the watcher exits. It never
+ * reconnects and never stops or restarts the Router. [isTunnelUp] is a cheap local check
+ * (JSch Session.isConnected), so polling does no network I/O.
+ *
+ * [stop] is terminal: it cancels any running watcher and makes later [start] calls no-ops.
+ */
+internal class OllamaTunnelWatch(
+    private val scope: CoroutineScope,
+    private val isTunnelUp: () -> Boolean,
+    private val publisher: OllamaAvailabilityPublisher,
+    private val pollIntervalMs: Long = POLL_INTERVAL_MS,
+) {
+    private var job: Job? = null
+    private var disposed = false
+
+    val isRunning: Boolean
+        get() = job?.isActive == true
+
+    fun start() {
+        if (disposed) return
+        job?.cancel()
+        job = scope.launch {
+            while (true) {
+                delay(pollIntervalMs)
+                // A failed update is retried on the next poll; success ends the watch.
+                if (!isTunnelUp() && publisher.publish(false)) return@launch
+            }
+        }
+    }
+
+    fun stop() {
+        disposed = true
+        job?.cancel()
+        job = null
+    }
+
+    companion object {
+        const val POLL_INTERVAL_MS = 5_000L
     }
 }
 
