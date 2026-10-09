@@ -33,6 +33,20 @@ class RouterService : Service() {
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
+    /** Single writer of Ollama availability to the embedded Router (deduplicated). */
+    private val ollamaPublisher = OllamaAvailabilityPublisher { available ->
+        check(RouterRuntime.setOllamaAvailability(applicationContext, available)) {
+            "Ollama availability update was not accepted by the Router."
+        }
+    }
+
+    /** Marks Ollama unavailable if the established SSH tunnel is lost while Router runs. */
+    private val ollamaTunnelWatch = OllamaTunnelWatch(
+        scope = scope,
+        isTunnelUp = { SshTunnel.isUp() },
+        publisher = ollamaPublisher,
+    )
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -55,9 +69,13 @@ class RouterService : Service() {
                 // and must not prevent the Router from starting.
                 val tunnelStarted = startRouterAfterTunnel(
                     tunnelStart = { SshTunnel.start(applicationContext) },
-                    routerStart = { RouterRuntime.bringUp(applicationContext); Unit },
+                    routerStart = { RouterRuntime.bringUp(applicationContext) },
+                    setOllamaAvailable = { available -> ollamaPublisher.publish(available) },
                 )
-                if (!tunnelStarted) {
+                if (tunnelStarted) {
+                    // Only an established tunnel is watched; a failed start is reported below.
+                    ollamaTunnelWatch.start()
+                } else {
                     RouterRuntime.reportSshTunnelFailure(
                         SshTunnel.lastError(),
                         SshSessionSecrets.password(),
@@ -68,15 +86,26 @@ class RouterService : Service() {
     }
 
     private fun handleStop() {
-        // Close the SSH forward with the Router it serves, then drop the session-only SSH
-        // password from memory (it was never persisted).
-        SshTunnel.stop()
-        SshSessionSecrets.clear()
-        RouterRuntime.markStopped()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
-        // Deterministic stop (no graceful Node shutdown available in-process).
-        android.os.Process.killProcess(android.os.Process.myPid())
+        // Stop watching before the explicit STOP so a late tunnel drop cannot race it.
+        ollamaTunnelWatch.stop()
+        scope.launch {
+            try {
+                // Tell the embedded Router to fail closed BEFORE releasing the SSH forward.
+                // Skipped when the loss watcher already reported unavailable (publisher dedup).
+                stopTunnelAfterDisablingOllama(
+                    setOllamaUnavailable = { ollamaPublisher.publish(false) },
+                    stopTunnel = { SshTunnel.stop() },
+                )
+            } finally {
+                // Drop the session-only SSH password and preserve the existing STOP behavior.
+                SshSessionSecrets.clear()
+                RouterRuntime.markStopped()
+                ServiceCompat.stopForeground(this@RouterService, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                stopSelf()
+                // Deterministic stop (no graceful Node shutdown available in-process).
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
+        }
     }
 
     private fun startForegroundNow() {
@@ -115,6 +144,7 @@ class RouterService : Service() {
             .build()
 
     override fun onDestroy() {
+        ollamaTunnelWatch.stop()
         scope.cancel()
         super.onDestroy()
     }

@@ -4,6 +4,7 @@ import android.content.Context
 import com.tariffia.panel.data.SecureSettingsStore
 import com.tariffia.panel.data.providers.ProviderKeySyncRunner
 import com.tariffia.panel.data.providers.summaryText
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -37,7 +38,7 @@ object RouterRuntime {
     private const val ROUTER_DIR_NAME = "router"
     private const val DIST_ZIP_ASSET = "router-dist.zip"
     private const val LAUNCHER_ASSET = "router-launcher.mjs"
-    private const val ROUTER_BUNDLE_VERSION = "d5662d4e7a8f85341178f9a5e44322a336943149"
+    private const val ROUTER_BUNDLE_VERSION = "75502b326f471489fbb2c9da4933d384005d0733"
 
     private const val HEALTH_TIMEOUT_MS = 20_000L
     private const val HEALTH_POLL_INTERVAL_MS = 500L
@@ -237,6 +238,18 @@ object RouterRuntime {
             pollIntervalMs = HEALTH_POLL_INTERVAL_MS,
             probe = { client.fetchHealth(BASE_URL, token) is RouterResult.Success },
         )
+    }
+
+    /** Sends the transient Ollama tunnel state to this embedded Router using its existing token. */
+    suspend fun setOllamaAvailability(ctx: Context, available: Boolean): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val token = activeToken ?: ensureLocalConfig(ctx).token
+            client.setOllamaAvailability(BASE_URL, token, available) is RouterResult.Success
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**
